@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { useTokenOperations } from '@/hooks/useTokenOperations';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
+import { useTokenOperations } from '../hooks/useTokenOperations';
+import { Label } from '../components/ui/label';
+import { Input } from '../components/ui/input';
+import { Textarea } from '../components/ui/textarea';
+import { Button } from '../components/ui/button';
+import { Switch } from '../components/ui/switch';
 import { Coins, Image as ImageIcon, Globe, TwitterLogo, TelegramLogo, Check, X } from '@phosphor-icons/react';
 
 const TokenCreationForm = () => {

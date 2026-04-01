@@ -1,8 +1,16 @@
 const webpack = require('webpack');
+const path = require('path');
 
 module.exports = {
   webpack: {
     configure: (webpackConfig) => {
+      // Add path aliases
+      webpackConfig.resolve.alias = {
+        ...webpackConfig.resolve.alias,
+        '@': path.resolve(__dirname, 'src'),
+      };
+
+      // Add polyfills  
       webpackConfig.resolve.fallback = {
         ...webpackConfig.resolve.fallback,
         crypto: require.resolve('crypto-browserify'),
@@ -16,7 +24,16 @@ module.exports = {
         process: require.resolve('process/browser'),
         buffer: require.resolve('buffer/')
       };
+
+      // Disable fullySpecified for .mjs files
+      webpackConfig.module.rules.push({
+        test: /\.m?js/,
+        resolve: {
+          fullySpecified: false
+        }
+      });
       
+      // Provide plugins
       webpackConfig.plugins = [
         ...webpackConfig.plugins,
         new webpack.ProvidePlugin({
@@ -25,8 +42,9 @@ module.exports = {
         }),
       ];
 
+      // Ignore warnings
       webpackConfig.ignoreWarnings = [/Failed to parse source map/];
-      
+
       return webpackConfig;
     },
   },

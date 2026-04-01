@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { MagnifyingGlass, Check, X, ArrowSquareOut } from '@phosphor-icons/react';
-import { Input } from '@/components/ui/input';
+import { Input } from '../components/ui/input';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
