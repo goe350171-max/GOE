@@ -16,13 +16,14 @@ module.exports = {
         crypto: require.resolve('crypto-browserify'),
         stream: require.resolve('stream-browserify'),
         assert: require.resolve('assert'),
-        http: require.resolve('stream-http'),
+        http: false,
         https: require.resolve('https-browserify'),
         os: require.resolve('os-browserify/browser'),
         url: require.resolve('url'),
         zlib: require.resolve('browserify-zlib'),
         process: require.resolve('process/browser'),
-        buffer: require.resolve('buffer/')
+        buffer: require.resolve('buffer/'),
+        vm: false
       };
 
       // Disable fullySpecified for .mjs files
