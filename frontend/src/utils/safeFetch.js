@@ -1,31 +1,23 @@
-// Safe fetch wrapper that prevents double-reading response body
+// Safe fetch wrapper - NO CLONE, single read pattern
 const safeFetch = async (url, options = {}) => {
-  const response = await fetch(url, options);
-  
-  // Clone response for potential retry or logging
-  const clonedResponse = response.clone();
+  const res = await fetch(url, options);
   
   let data;
-  const contentType = response.headers.get('content-type');
+  const contentType = res.headers.get('content-type');
   
   try {
     if (contentType && contentType.includes('application/json')) {
-      data = await response.json();
+      data = await res.json();
     } else {
-      data = await response.text();
+      data = await res.text();
     }
   } catch (parseError) {
-    // If JSON parsing fails, try text
-    try {
-      data = await clonedResponse.text();
-    } catch (textError) {
-      throw new Error('Failed to parse response');
-    }
+    throw new Error(`Failed to parse response: ${parseError.message}`);
   }
   
-  if (!response.ok) {
+  if (!res.ok) {
     const errorMessage = typeof data === 'object' ? JSON.stringify(data) : data;
-    throw new Error(errorMessage || `HTTP ${response.status}: ${response.statusText}`);
+    throw new Error(errorMessage || `HTTP ${res.status}: ${res.statusText}`);
   }
   
   return data;

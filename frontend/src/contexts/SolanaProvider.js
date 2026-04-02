@@ -20,14 +20,13 @@ export const SolanaProvider = ({ children }) => {
       httpHeaders: undefined,
       fetch: async (url, options) => {
         const response = await fetch(url, options);
-        const cloned = response.clone();
         
         if (!response.ok) {
-          let errorText;
+          let errorText = `HTTP ${response.status}`;
           try {
-            errorText = await cloned.text();
+            errorText = await response.text();
           } catch (e) {
-            errorText = `HTTP ${response.status}`;
+            // Keep default error message
           }
           throw new Error(errorText);
         }
