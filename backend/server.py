@@ -92,6 +92,7 @@ class TokenRecord(BaseModel):
     transaction_signature: Optional[str] = None
 
 async def get_latest_blockhash():
+    """Get latest blockhash from Solana RPC with error handling"""
     async with aiohttp.ClientSession() as session:
         async with session.post(
             SOLANA_RPC_URL,
@@ -100,13 +101,39 @@ async def get_latest_blockhash():
                 "id": 1,
                 "method": "getLatestBlockhash",
                 "params": [{"commitment": "finalized"}]
+            },
+            headers={
+                "Content-Type": "application/json"
             }
         ) as resp:
+            if resp.status == 403:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Solana RPC endpoint rate limit exceeded. Please use a dedicated RPC endpoint (Helius, QuickNode, or Alchemy) for production. Set SOLANA_RPC_URL in backend/.env"
+                )
+            
+            if resp.status != 200:
+                error_text = await resp.text()
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Solana RPC error ({resp.status}): {error_text}"
+                )
+            
             data = await resp.json()
             if 'result' in data and 'value' in data['result']:
                 blockhash_str = data['result']['value']['blockhash']
                 return Hash.from_string(blockhash_str)
-            raise Exception("Failed to get blockhash")
+            
+            if 'error' in data:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Solana RPC error: {data['error']}"
+                )
+            
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to get blockhash from Solana RPC"
+            )
 
 @api_router.get("/")
 async def root():

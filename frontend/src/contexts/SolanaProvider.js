@@ -8,7 +8,7 @@ import { clusterApiUrl, Connection } from '@solana/web3.js';
 import '@solana/wallet-adapter-react-ui/styles.css';
 
 export const SolanaProvider = ({ children }) => {
-  const network = WalletAdapterNetwork.Mainnet;
+  const network = WalletAdapterNetwork.Devnet;
   
   const endpoint = useMemo(() => clusterApiUrl(network), [network]);
   
