@@ -59,8 +59,8 @@ const Header = () => {
 
           <div className="flex items-center gap-4">
             <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-zinc-100 border border-zinc-300">
-              <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
-              <span className="text-xs font-semibold uppercase tracking-wider">Devnet</span>
+              <div className="w-2 h-2 bg-success rounded-full animate-pulse" />
+              <span className="text-xs font-semibold uppercase tracking-wider">Mainnet</span>
             </div>
             
             <WalletMultiButton data-testid="connect-wallet-btn" />

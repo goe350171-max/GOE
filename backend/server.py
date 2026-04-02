@@ -42,6 +42,16 @@ ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH
 
 SOLANA_RPC_URL = os.environ.get('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
 
+# Log RPC connection at startup (mask API key for security)
+rpc_display = SOLANA_RPC_URL.split('api-key=')[0] + 'api-key=***' if 'api-key=' in SOLANA_RPC_URL else SOLANA_RPC_URL
+logger.info(f"Solana RPC configured: {rpc_display}")
+if 'helius' in SOLANA_RPC_URL.lower():
+    logger.info("✓ Using Helius RPC (Mainnet)")
+elif 'devnet' in SOLANA_RPC_URL.lower():
+    logger.info("⚠ Using Devnet RPC")
+else:
+    logger.info("Using custom RPC endpoint")
+
 class TokenMetadata(BaseModel):
     name: str
     symbol: str
