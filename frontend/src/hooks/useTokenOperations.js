@@ -7,6 +7,9 @@ import {toast} from 'sonner';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
+console.info('Backend URL:', BACKEND_URL);
+console.info('API Base:', API);
+
 export const useTokenOperations = () => {
   const { connection } = useConnection();
   const { publicKey, sendTransaction, signTransaction } = useWallet();
@@ -25,6 +28,15 @@ export const useTokenOperations = () => {
     try {
       toast.loading('Creating token...');
       
+      console.log('POST Request to:', `${API}/tokens/create`);
+      console.log('Request data:', {
+        payer: publicKey.toBase58(),
+        metadata: tokenData.metadata,
+        revoke_mint_authority: tokenData.revokeMintAuthority,
+        revoke_freeze_authority: tokenData.revokeFreezeAuthority,
+        revoke_update_authority: tokenData.revokeUpdateAuthority
+      });
+      
       const response = await axios.post(`${API}/tokens/create`, {
         payer: publicKey.toBase58(),
         metadata: tokenData.metadata,
@@ -32,6 +44,8 @@ export const useTokenOperations = () => {
         revoke_freeze_authority: tokenData.revokeFreezeAuthority,
         revoke_update_authority: tokenData.revokeUpdateAuthority
       });
+      
+      console.log('Response:', response.data);
 
       const { transaction: txData, mintKeypair: mintKeypairData, mint } = response.data;
       
@@ -65,6 +79,9 @@ export const useTokenOperations = () => {
       return { success: true, signature, mint };
     } catch (err) {
       toast.dismiss();
+      console.error('Token creation error:', err);
+      console.error('Error response:', err.response);
+      console.error('Request config:', err.config);
       const errorMessage = err?.response?.data?.detail || err.message || 'Unknown error';
       setError(errorMessage);
       toast.error(`Failed to create token: ${errorMessage}`);
