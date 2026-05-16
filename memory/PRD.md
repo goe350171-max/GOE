@@ -10,6 +10,24 @@ Build a Solana token launchpad with free token creation (no platform fees), wall
 
 ## What's Implemented (Feb 2026)
 
+### Live Cost Preview Chip + Deep Diagnostics (Feb 2026)
+**Cost preview chip** in Launchpad sidebar:
+- New `/app/frontend/src/components/CostPreviewChip.js` shows estimated SOL cost computed from known Solana rent constants (mint rent 1.46M + metadata PDA rent 5.62M + ATA rent 2.04M + 2-sig network fee 10K = ~0.009128 SOL).
+- Pure UX preview — no RPC calls, no backend calls, no automatic signing. The accurate per-tx cost is still computed fresh by `SafetyConfirmModal` right before signing.
+- Adapts to current network: green DEVNET tag / red MAINNET tag; shows Test Mode hint.
+- `data-testid="cost-preview-chip|total|network-tag|breakdown"`.
+
+**Diagnostics pass** (no logic changes):
+- Backend: env-gated `DEBUG_TOKEN_CREATE` (default 1 in current build) emits structured `[token-create:<stage>]` logs at every step — request, blockhash, mint_params, uris, tx_built, FAIL. Defense-in-depth checks added:
+  - u64-overflow guard at runtime (Pydantic catches it; this is a safety net)
+  - Metadata URI auto-truncates to Metaplex 200-byte limit with warning log
+  - Built-transaction size pre-checked against 1232-byte Solana wire-format cap before returning to the wallet
+  - Outer exception wrapper now includes `type(e).__name__` so generic Python errors are still attributable
+- Frontend: new `[token-create]` console group in `useTokenOperations.createToken` with 9 numbered stages (preflight → backend payload → tx deserialized → simulation → safety modal → wallet sign → send → confirm → verify → audit log). Each stage logs structured context. Activated by `REACT_APP_DEBUG_TOKEN_CREATE` (default on).
+- Frontend preflight validation: rejects undefined/null `metadata.name`, `symbol`, `decimals` (non-integer), `total_supply` (non-positive), and missing payer pubkey BEFORE the network call.
+- Frontend `extractErrorMessage` hardened: detects generic strings ("invalid arguments", "bad arguments", etc.) and falls back to a composite context message + console pointer; never returns a useless toast.
+- Backend always returns a clear field-named string in `detail`.
+
 ### Inline Field Validation on Launchpad (Feb 2026)
 - New `/app/frontend/src/utils/launchpadValidation.js` — pure validators that mirror backend Pydantic constraints exactly (name 1-64, symbol 1-12, decimals 0-18, supply 1..10^18 plus BigInt u64-overflow cross-check, description ≤2000, URL fields with `http/https/ipfs` scheme validation)
 - Wired into `/app/frontend/src/pages/Launchpad.js`:

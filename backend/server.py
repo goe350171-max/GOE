@@ -85,6 +85,23 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+# Optional verbose diagnostics for token creation. Off by default in prod.
+DEBUG_TOKEN_CREATE = os.environ.get('DEBUG_TOKEN_CREATE', '0') in ('1', 'true', 'True', 'yes')
+
+
+def dbg_create(stage: str, **data):
+    """Structured diagnostic log for token-create stages.
+    Gated by DEBUG_TOKEN_CREATE env var to avoid log spam in production."""
+    if not DEBUG_TOKEN_CREATE:
+        return
+    safe = {}
+    for k, v in data.items():
+        sv = str(v)
+        if len(sv) > 400:
+            sv = sv[:400] + '…(trunc)'
+        safe[k] = sv
+    logger.info("[token-create:%s] %s", stage, safe)
+
 TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
 SYSTEM_PROGRAM_ID = Pubkey.from_string("11111111111111111111111111111111")
 RENT_PROGRAM_ID = Pubkey.from_string("SysvarRent111111111111111111111111111111111")
@@ -687,12 +704,21 @@ async def create_token(request: Request, payload: TokenCreationRequest):
     try:
         start_time = time.time()
         logger.info(f"Creating token: {payload.metadata.name}")
-        
+        dbg_create('request', payer=payload.payer, name=payload.metadata.name,
+                   symbol=payload.metadata.symbol, decimals=payload.metadata.decimals,
+                   total_supply=payload.metadata.total_supply,
+                   image_present=bool(payload.metadata.image),
+                   logo_present=bool(payload.metadata.logo),
+                   revoke_mint=payload.revoke_mint_authority,
+                   revoke_freeze=payload.revoke_freeze_authority,
+                   revoke_update=payload.revoke_update_authority)
+
         payer_pubkey = Pubkey.from_string(payload.payer)
         mint_keypair = Keypair()
         mint_pubkey = mint_keypair.pubkey()
-        
+
         recent_blockhash = await get_latest_blockhash()
+        dbg_create('blockhash', value=str(recent_blockhash))
         
         # --- Derive ATA for creator ---
         ata_pubkey = Pubkey.find_program_address(
@@ -707,10 +733,20 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         decimals = payload.metadata.decimals
         total_supply = payload.metadata.total_supply
         mint_amount = total_supply * (10 ** decimals)
-        
+
+        # Defense in depth: u64 safety check (Pydantic should have caught this)
+        U64_MAX = (1 << 64) - 1
+        if mint_amount > U64_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=f"metadata: total_supply × 10^decimals = {mint_amount} exceeds Solana u64 max ({U64_MAX})."
+            )
+
         logger.info(f"  Supply:  {total_supply}")
         logger.info(f"  Decimals: {decimals}")
         logger.info(f"  Raw amt: {mint_amount}")
+        dbg_create('mint_params', mint=str(mint_pubkey), ata=str(ata_pubkey),
+                   decimals=decimals, total_supply=total_supply, raw_amount=mint_amount)
         
         # --- Instruction 1: Create mint account ---
         MINT_SIZE = 82
@@ -804,6 +840,16 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         logger.info(f"  Metadata PDA: {metadata_pda}")
         logger.info(f"  Image URI:    {image_ipfs_uri}")
         logger.info(f"  Metadata URI: {metadata_uri}")
+        dbg_create('uris', image=image_ipfs_uri, metadata=metadata_uri,
+                   metadata_pda=str(metadata_pda))
+
+        # Metaplex hard limit on metadata URI is 200 bytes.
+        # Truncate (with warning) rather than letting Borsh fail downstream.
+        if metadata_uri and len(metadata_uri) > 200:
+            logger.warning(
+                f"  Metadata URI {len(metadata_uri)} bytes exceeds Metaplex 200-byte limit; truncating"
+            )
+            metadata_uri = metadata_uri[:200]
         
         create_metadata_ix = build_create_metadata_v3_ix(
             metadata_pda=metadata_pda,
@@ -849,9 +895,20 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         tx = SoldersTransaction.new_unsigned(msg)
         tx_serialized = bytes(tx)
         mint_secret = bytes(mint_keypair)
-        
+
+        # Defense in depth: enforce Solana wire-format 1232-byte cap before
+        # returning to the wallet (saves a guaranteed-to-fail signing prompt).
+        if len(tx_serialized) > 1232:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Built transaction is {len(tx_serialized)} bytes (>1232 cap). "
+                       f"Reduce metadata length (currently {len(payload.metadata.name)+len(payload.metadata.symbol)+len(metadata_uri)} bytes of strings)."
+            )
+
         mint_address = str(mint_pubkey)
         ata_address = str(ata_pubkey)
+        dbg_create('tx_built', size_bytes=len(tx_serialized),
+                   instruction_count=len(instructions), mint=mint_address)
         
         # --- Save token record ---
         token_record = TokenRecord(
@@ -918,7 +975,8 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         raise
     except Exception as e:
         logger.error(f"Token creation failed: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=400, detail=str(e))
+        dbg_create('FAIL', error=str(e), error_type=type(e).__name__)
+        raise HTTPException(status_code=400, detail=f"token_create: {type(e).__name__}: {e}")
 
 @api_router.post("/tokens/update-signature")
 async def update_token_signature(mint: str, signature: str, verified: bool = False, on_chain_supply: str = "0"):

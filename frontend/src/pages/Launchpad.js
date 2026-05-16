@@ -12,6 +12,7 @@ import axios from 'axios';
 import { toast } from 'sonner';
 import SuccessModal from '../components/SuccessModal';
 import SafetyConfirmModal from '../components/SafetyConfirmModal';
+import CostPreviewChip from '../components/CostPreviewChip';
 import { validateField, validateAll } from '../utils/launchpadValidation';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -596,6 +597,10 @@ const TokenCreationForm = () => {
             >
               {uploading ? 'Uploading image...' : loading ? 'Creating...' : connected ? 'Create Token' : 'Connect Wallet'}
             </Button>
+
+            <div className="mt-4">
+              <CostPreviewChip valid={Object.keys(fieldErrors).filter((k) => fieldErrors[k]).length === 0 && !!formData.name && !!formData.symbol && !!formData.totalSupply} />
+            </div>
 
             {!connected && (
               <div className="mt-6 border border-zinc-300 p-4">
