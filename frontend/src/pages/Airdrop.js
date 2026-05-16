@@ -13,11 +13,9 @@ import { Textarea } from '../components/ui/textarea';
 import { Button } from '../components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from '../components/ui/dialog';
 import { useAirdropOperations } from '../hooks/useAirdropOperations';
 import { parseAirdropInput, chunkRecipients, parseCsvText } from '../utils/airdrop';
+import SafetyConfirmModal from '../components/SafetyConfirmModal';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -46,7 +44,7 @@ const Airdrop = () => {
   const [csvName, setCsvName] = useState('');
 
   // Execution state
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [safetyModal, setSafetyModal] = useState({ open: false, loadingSimulation: false, simulation: null });
   const [progress, setProgress] = useState(null);
   const [batchResults, setBatchResults] = useState([]); // [{ batchIndex, success, signature, error, recipients }]
 
@@ -133,7 +131,7 @@ const Airdrop = () => {
     !insufficient &&
     !running;
 
-  const handlePreview = () => {
+  const handlePreview = async () => {
     if (!canExecute) {
       if (!connected) return toast.error('Connect your wallet first');
       if (parsed.errors.length > 0) return toast.error('Fix validation errors before continuing');
@@ -143,28 +141,46 @@ const Airdrop = () => {
     }
     setBatchResults([]);
     setProgress(null);
-    setConfirmOpen(true);
+    setSafetyModal({ open: true, loadingSimulation: true, simulation: null });
+
+    try {
+      const preview = await previewAirdrop({
+        mint: effectiveMint,
+        decimals: mintInfo.decimals,
+        batches,
+      });
+      setSafetyModal({
+        open: true,
+        loadingSimulation: false,
+        simulation: preview.simulation,
+      });
+    } catch (e) {
+      setSafetyModal({
+        open: true,
+        loadingSimulation: false,
+        simulation: { ok: false, error: e?.message || String(e), logs: [] },
+      });
+    }
   };
 
   const handleExecute = async () => {
-    setConfirmOpen(false);
+    setSafetyModal({ open: false, loadingSimulation: false, simulation: null });
     setBatchResults([]);
     toast.loading(`Starting airdrop: ${batches.length} batch${batches.length > 1 ? 'es' : ''}…`, { id: 'airdrop-run' });
 
-    const { results } = await executeAirdrop({
+    const { results = [] } = await executeAirdrop({
       mint: effectiveMint,
       decimals: mintInfo.decimals,
       batches,
       onProgress: (p) => setProgress(p),
-      maxRetries: 1,
     });
 
-    setBatchResults(results || []);
+    setBatchResults(results);
     toast.dismiss('airdrop-run');
 
     const successful = results.filter((r) => r.success).length;
     const failed = results.length - successful;
-    if (failed === 0) {
+    if (failed === 0 && successful > 0) {
       toast.success(`Airdrop complete: ${successful}/${batches.length} batches confirmed`);
     } else if (successful === 0) {
       toast.error(`Airdrop failed: ${failed}/${batches.length} batches errored`);
@@ -173,7 +189,6 @@ const Airdrop = () => {
     }
     setProgress(null);
 
-    // Refresh balance
     if (publicKey) {
       try {
         const bal = await fetchBalance(effectiveMint, publicKey.toBase58());
@@ -464,46 +479,23 @@ const Airdrop = () => {
         )}
       </div>
 
-      {/* Confirmation modal */}
-      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent data-testid="airdrop-confirm-dialog" className="rounded-none border-zinc-300">
-          <DialogHeader>
-            <DialogTitle className="text-2xl font-black tracking-tighter">Confirm airdrop</DialogTitle>
-            <DialogDescription>
-              You're about to sign {batches.length} transaction{batches.length > 1 ? 's' : ''} with your wallet.
-              Each batch must be signed individually.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-4 text-sm border-y border-zinc-200 py-4">
-            <Stat label="Token" value={mintInfo ? `${mintInfo.decimals}d` : '—'} testid="confirm-token" />
-            <Stat label="Recipients" value={parsed.valid.length} testid="confirm-recipients" />
-            <Stat label="Total tokens" value={totalAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })} testid="confirm-total" />
-            <Stat label="Est. fee" value={`~${estimatedFeeSol} SOL`} testid="confirm-fee" />
-          </div>
-          <p className="text-xs text-zinc-600">
-            New recipient ATAs (if any) will be created automatically. Your wallet signs each batch — private keys never leave Phantom/Solflare.
-          </p>
-          <DialogFooter className="gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              data-testid="confirm-cancel-btn"
-              onClick={() => setConfirmOpen(false)}
-              className="rounded-none"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              data-testid="confirm-execute-btn"
-              onClick={handleExecute}
-              className="rounded-none bg-black text-white hover:bg-zinc-800"
-            >
-              Sign &amp; send {batches.length} tx
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Safety Confirmation modal — simulation-backed + explicit user click */}
+      <SafetyConfirmModal
+        open={!!safetyModal?.open}
+        loadingSimulation={!!safetyModal?.loadingSimulation}
+        simulation={safetyModal?.simulation}
+        actionLabel={`Airdrop · ${parsed.valid.length} recipients · ${batches.length} tx`}
+        walletAddress={publicKey?.toBase58() || ''}
+        breakdownLines={[
+          { label: 'Token', value: `${mintInfo?.decimals ?? '—'}-decimal SPL` },
+          { label: 'Recipients', value: String(parsed.valid.length) },
+          { label: 'Total tokens', value: totalAmount.toLocaleString(undefined, { maximumFractionDigits: 6 }) },
+          { label: 'Batches', value: `${batches.length} (×${BATCH_SIZE} max)` },
+        ]}
+        primaryActionText={`Confirm & sign ${batches.length} tx`}
+        onCancel={() => setSafetyModal({ open: false, loadingSimulation: false, simulation: null })}
+        onConfirm={handleExecute}
+      />
     </div>
   );
 };

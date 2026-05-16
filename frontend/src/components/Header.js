@@ -3,6 +3,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { Link, useLocation } from 'react-router-dom';
 import { Rocket } from '@phosphor-icons/react';
+import NetworkSwitcher from './NetworkSwitcher';
 
 const Header = () => {
   const { connected } = useWallet();
@@ -19,7 +20,7 @@ const Header = () => {
               <Rocket size={32} weight="bold" className="text-foreground" />
               <h1 className="text-xl font-black tracking-tighter">SOLAUNCH</h1>
             </Link>
-            
+
             <nav className="hidden md:flex items-center gap-1">
               <Link
                 to="/"
@@ -57,12 +58,8 @@ const Header = () => {
             </nav>
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-zinc-100 border border-zinc-300">
-              <div className="w-2 h-2 bg-success rounded-full animate-pulse" />
-              <span className="text-xs font-semibold uppercase tracking-wider">Mainnet</span>
-            </div>
-            
+          <div className="flex items-center gap-3">
+            <NetworkSwitcher />
             <WalletMultiButton data-testid="connect-wallet-btn" />
           </div>
         </div>

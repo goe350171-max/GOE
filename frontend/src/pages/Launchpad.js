@@ -11,6 +11,7 @@ import { Coins, Image as ImageIcon, Globe, TwitterLogo, TelegramLogo, Check, X, 
 import axios from 'axios';
 import { toast } from 'sonner';
 import SuccessModal from '../components/SuccessModal';
+import SafetyConfirmModal from '../components/SafetyConfirmModal';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -22,6 +23,10 @@ const TokenCreationForm = () => {
 
   // Success modal state
   const [successData, setSuccessData] = useState(null);
+
+  // Safety confirm modal state
+  const [safetyModal, setSafetyModal] = useState(null);
+  // { open, loadingSimulation, simulation, resolve }
 
   // Wallet disconnect detection
   const prevConnected = useRef(connected);
@@ -163,6 +168,15 @@ const TokenCreationForm = () => {
       revokeMintAuthority: authorities.revokeMint,
       revokeFreezeAuthority: authorities.revokeFreeze,
       revokeUpdateAuthority: authorities.revokeUpdate
+    }, {
+      confirmBeforeSign: ({ simulation }) => new Promise((resolve) => {
+        setSafetyModal({
+          open: true,
+          loadingSimulation: false,
+          simulation,
+          resolve,
+        });
+      }),
     });
 
     if (result?.success) {
@@ -523,6 +537,30 @@ const TokenCreationForm = () => {
 
       {/* Success Modal */}
       <SuccessModal data={successData} onClose={() => setSuccessData(null)} />
+
+      {/* Safety Confirmation Modal — required user click before signing */}
+      <SafetyConfirmModal
+        open={!!safetyModal?.open}
+        loadingSimulation={!!safetyModal?.loadingSimulation}
+        simulation={safetyModal?.simulation}
+        actionLabel="Create SPL Token"
+        walletAddress={publicKey?.toBase58() || ''}
+        breakdownLines={[
+          { label: 'Token name', value: formData.name || '—' },
+          { label: 'Symbol', value: formData.symbol || '—' },
+          { label: 'Total supply', value: formData.totalSupply ? Number(formData.totalSupply).toLocaleString() : '—' },
+          { label: 'Decimals', value: String(formData.decimals) },
+        ]}
+        primaryActionText="Confirm & Sign in wallet"
+        onCancel={() => {
+          safetyModal?.resolve?.(false);
+          setSafetyModal(null);
+        }}
+        onConfirm={() => {
+          safetyModal?.resolve?.(true);
+          setSafetyModal(null);
+        }}
+      />
     </div>
   );
 };

@@ -1,18 +1,24 @@
 import React, { useMemo } from 'react';
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
-import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
+import { useNetwork } from './NetworkContext';
 
 import '@solana/wallet-adapter-react-ui/styles.css';
 
+const DEVNET_RPC = 'https://api.devnet.solana.com';
+
 export const SolanaProvider = ({ children }) => {
-  // Use Helius mainnet RPC from environment variable
-  const endpoint = useMemo(
-    () => process.env.REACT_APP_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
-    []
-  );
-  
+  const { network } = useNetwork();
+
+  // Default = DEVNET (safe). Mainnet is opt-in via NetworkSwitcher.
+  const endpoint = useMemo(() => {
+    if (network === 'mainnet') {
+      return process.env.REACT_APP_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
+    }
+    return process.env.REACT_APP_SOLANA_DEVNET_RPC_URL || DEVNET_RPC;
+  }, [network]);
+
   const config = useMemo(
     () => ({
       commitment: 'confirmed',
@@ -21,23 +27,19 @@ export const SolanaProvider = ({ children }) => {
       httpHeaders: undefined,
       fetch: async (url, options) => {
         const response = await fetch(url, options);
-        
         if (!response.ok) {
           let errorText = `HTTP ${response.status}`;
           try {
             errorText = await response.text();
-          } catch (e) {
-            // Keep default error message
-          }
+          } catch (e) { /* Keep default error message */ }
           throw new Error(errorText);
         }
-        
         return response;
-      }
+      },
     }),
     []
   );
-  
+
   const wallets = useMemo(
     () => [
       new PhantomWalletAdapter(),
@@ -46,11 +48,17 @@ export const SolanaProvider = ({ children }) => {
     []
   );
 
-  // Log connection info (mask API key)
-  console.info('Solana RPC:', endpoint.split('api-key=')[0] + (endpoint.includes('api-key=') ? 'api-key=***' : ''));
+  // eslint-disable-next-line no-console
+  console.info(
+    '[Solana] network=',
+    network,
+    'endpoint=',
+    endpoint.split('api-key=')[0] + (endpoint.includes('api-key=') ? 'api-key=***' : ''),
+  );
 
+  // key on network so ConnectionProvider remounts cleanly when the user toggles
   return (
-    <ConnectionProvider endpoint={endpoint} config={config}>
+    <ConnectionProvider key={network} endpoint={endpoint} config={config}>
       <WalletProvider wallets={wallets} autoConnect>
         <WalletModalProvider>{children}</WalletModalProvider>
       </WalletProvider>
