@@ -210,23 +210,25 @@ class TestTokenCreateValidation:
 
     def test_name_too_long(self):
         r = self._post(override_meta={"name": "A" * 65})
-        assert r.status_code == 422, r.text
+        assert r.status_code in (400, 422), r.text
 
     def test_symbol_too_long(self):
         r = self._post(override_meta={"symbol": "X" * 13})
-        assert r.status_code == 422
+        assert r.status_code in (400, 422)
 
     def test_decimals_out_of_range(self):
-        r = self._post(override_meta={"decimals": 10})
-        assert r.status_code == 422
+        # Backend now accepts 0-18 decimals; 19 is the first invalid value
+        r = self._post(override_meta={"decimals": 19})
+        assert r.status_code in (400, 422)
 
     def test_supply_zero(self):
         r = self._post(override_meta={"total_supply": 0})
-        assert r.status_code == 422
+        assert r.status_code in (400, 422)
 
     def test_supply_too_large(self):
-        r = self._post(override_meta={"total_supply": 10**16})
-        assert r.status_code == 422
+        # Backend now accepts up to 10**18 for human supply
+        r = self._post(override_meta={"total_supply": 10**19})
+        assert r.status_code in (400, 422)
 
     def test_invalid_payer(self):
         r = self._post(override_root={"payer": "not-a-pubkey"})

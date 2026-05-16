@@ -10,6 +10,25 @@ Build a Solana token launchpad with free token creation (no platform fees), wall
 
 ## What's Implemented (Feb 2026)
 
+### Wallet/Tx Compatibility Diagnostics (Feb 2026)
+**DiagnosticsContext + DiagnosticsPanel** — live stage-event stream visible in the UI:
+- `/app/frontend/src/contexts/DiagnosticsContext.js`: in-memory event bus (100-event cap) with `push(stage, status, data)`. No-op fallback when provider missing.
+- `/app/frontend/src/components/DiagnosticsPanel.js`: fixed bottom-right floating panel; collapsed by default; expand to see the live stage stream; Copy/Clear buttons. Header turns red on failure, black on success, grey when empty. Gated by `REACT_APP_DEBUG_TOKEN_CREATE` (default ON).
+- Mounted globally in `App.js` next to `Toaster` so every page sees it.
+
+**useTokenOperations.createToken** — 11+ instrumented stages emit events:
+`init → preflight → backend-build → deserialize (+inspectTransaction) → size-check → simulate → user-confirm → wallet-sign → send → confirm → verify → audit`.
+- `inspectTransaction()` reports tx class name, legacy/versioned, instruction count, feePayer, recentBlockhash, signatures array (which slots are signed), per-instruction key counts, and surfaces missing feePayer/blockhash/signature-slot issues BEFORE handing the tx to Phantom.
+- **Defensive feePayer fix**: if `transaction.feePayer` is null after `Transaction.from(buffer)` deserialization, force-set it from the connected wallet's `publicKey`. This is the most common cause of Phantom rejecting with "invalid arguments".
+- Pre-sign and post-sign size checks against 1232-byte cap.
+- BigInt payload leak detection via `JSON.stringify(payload)` probe.
+- Specific try/catch around `signTransaction` and `sendRawTransaction` so the diagnostics panel records exactly which call failed.
+
+**Hardened `extractErrorMessage`**:
+- Names every wallet-adapter error class (`WalletSignTransactionError`, `WalletSendTransactionError`, `WalletConnectionError`, `WalletPublicKeyError`, etc.).
+- Detects generic messages ("invalid arguments", "bad arguments") and replaces with a clear annotated message + pointer to the Diagnostics panel.
+- Never lets a useless toast slip through.
+
 ### Live Cost Preview Chip + Deep Diagnostics (Feb 2026)
 **Cost preview chip** in Launchpad sidebar:
 - New `/app/frontend/src/components/CostPreviewChip.js` shows estimated SOL cost computed from known Solana rent constants (mint rent 1.46M + metadata PDA rent 5.62M + ATA rent 2.04M + 2-sig network fee 10K = ~0.009128 SOL).
