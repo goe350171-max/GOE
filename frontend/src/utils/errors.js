@@ -57,19 +57,32 @@ const extractFromBackend = (data) => {
 const extractFromWeb3 = (err) => {
   // SendTransactionError or simulation error often has logs
   if (err?.logs && Array.isArray(err.logs) && err.logs.length > 0) {
-    // Find the failing instruction line: "Program log: Error: ..."
     const errLine =
       err.logs.find((l) => /(error|failed|insufficient|invalid)/i.test(l)) ||
       err.logs[err.logs.length - 1];
     return `${err.message || 'Transaction error'} — ${errLine}`;
   }
-  // Wallet adapter: WalletSignTransactionError
-  if (err?.name === 'WalletSignTransactionError' || /sign/i.test(err?.name || '')) {
-    const msg = err?.message || 'Wallet refused to sign';
-    if (/user rejected|rejected the request/i.test(msg)) {
+  // Wallet-adapter errors — keep them named, never collapse to a generic toast.
+  const name = err?.name || '';
+  if (
+    name === 'WalletSignTransactionError' ||
+    name === 'WalletSendTransactionError' ||
+    name === 'WalletConnectionError' ||
+    name === 'WalletNotConnectedError' ||
+    name === 'WalletDisconnectedError' ||
+    name === 'WalletPublicKeyError' ||
+    /wallet/i.test(name)
+  ) {
+    const msg = err?.message || 'Wallet refused the request';
+    if (/user rejected|rejected the request|user denied/i.test(msg)) {
       return 'You cancelled the wallet prompt.';
     }
-    return `Wallet error: ${msg}`;
+    // Phantom often surfaces "Invalid arguments" — annotate so the toast is
+    // never the bare two words.
+    if (isGeneric(msg)) {
+      return `${name}: Phantom refused this transaction (likely missing fee payer or stale blockhash). Check the Diagnostics panel for the exact stage.`;
+    }
+    return `${name || 'Wallet error'}: ${msg}`;
   }
   return null;
 };
