@@ -39,6 +39,7 @@ TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5
 SYSTEM_PROGRAM_ID = Pubkey.from_string("11111111111111111111111111111111")
 RENT_PROGRAM_ID = Pubkey.from_string("SysvarRent111111111111111111111111111111111")
 ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+TOKEN_METADATA_PROGRAM_ID = Pubkey.from_string("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
 
 SOLANA_RPC_URL = os.environ.get('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
 
@@ -226,6 +227,119 @@ def build_set_authority_ix(account: Pubkey, current_authority: Pubkey, authority
     )
 
 
+# ─── Metaplex Token Metadata helpers ───────────────────────────────────
+
+import struct
+
+def _borsh_string(s: str) -> bytes:
+    """Borsh-encode a String (u32 LE length + UTF-8 bytes)."""
+    b = s.encode("utf-8")
+    return struct.pack("<I", len(b)) + b
+
+def _borsh_option_none() -> bytes:
+    return b"\x00"
+
+def _borsh_bool(v: bool) -> bytes:
+    return b"\x01" if v else b"\x00"
+
+def derive_metadata_pda(mint: Pubkey) -> Pubkey:
+    """Derive the Metaplex metadata PDA for a given mint."""
+    return Pubkey.find_program_address(
+        [b"metadata", bytes(TOKEN_METADATA_PROGRAM_ID), bytes(mint)],
+        TOKEN_METADATA_PROGRAM_ID
+    )[0]
+
+def build_create_metadata_v3_ix(
+    metadata_pda: Pubkey,
+    mint: Pubkey,
+    mint_authority: Pubkey,
+    payer: Pubkey,
+    update_authority: Pubkey,
+    name: str,
+    symbol: str,
+    uri: str,
+    is_mutable: bool = True,
+) -> Instruction:
+    """Build CreateMetadataAccountV3 instruction (discriminator = 33).
+
+    Borsh layout:
+      u8(33)
+      DataV2 { name, symbol, uri, seller_fee_basis_points, creators, collection, uses }
+      bool  is_mutable
+      Option<CollectionDetails>  (None)
+
+    Account order:
+      0  metadata        (writable)
+      1  mint
+      2  mintAuthority   (signer)
+      3  payer           (writable, signer)
+      4  updateAuthority
+      5  systemProgram
+      6  rent            (optional but explicit for safety)
+    """
+    data = bytes([33])  # CreateMetadataAccountV3 discriminator
+
+    # DataV2
+    data += _borsh_string(name)
+    data += _borsh_string(symbol)
+    data += _borsh_string(uri)
+    data += struct.pack("<H", 0)        # seller_fee_basis_points = 0 (fungible)
+    data += _borsh_option_none()        # creators  = None
+    data += _borsh_option_none()        # collection = None
+    data += _borsh_option_none()        # uses       = None
+
+    # is_mutable
+    data += _borsh_bool(is_mutable)
+
+    # collection_details = None
+    data += _borsh_option_none()
+
+    return Instruction(
+        program_id=TOKEN_METADATA_PROGRAM_ID,
+        accounts=[
+            AccountMeta(pubkey=metadata_pda, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=mint_authority, is_signer=True, is_writable=False),
+            AccountMeta(pubkey=payer, is_signer=True, is_writable=True),
+            AccountMeta(pubkey=update_authority, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=Pubkey.from_string("11111111111111111111111111111111"), is_signer=False, is_writable=False),
+            AccountMeta(pubkey=RENT_PROGRAM_ID, is_signer=False, is_writable=False),
+        ],
+        data=data,
+    )
+
+
+# ─── Metadata JSON endpoint ────────────────────────────────────────────
+
+@api_router.get("/metadata/{mint_address}.json")
+async def get_token_metadata_json(mint_address: str):
+    """Serve off-chain metadata JSON for a given mint address.
+    This URL is stored on-chain as the `uri` field in Metaplex metadata."""
+    token = await db.tokens.find_one({"mint": mint_address}, {"_id": 0})
+    if not token:
+        raise HTTPException(status_code=404, detail="Token not found")
+
+    social_links = token.get("social_links") or {}
+
+    metadata_json = {
+        "name": token.get("name", ""),
+        "symbol": token.get("symbol", ""),
+        "description": token.get("description", ""),
+        "image": token.get("image") or token.get("logo") or "",
+        "external_url": social_links.get("website", ""),
+        "attributes": [],
+        "properties": {
+            "links": {
+                k: v for k, v in social_links.items() if v
+            },
+            "category": "currency",
+        },
+    }
+
+    from fastapi.responses import JSONResponse
+    return JSONResponse(content=metadata_json)
+
+
 @api_router.post("/tokens/create")
 async def create_token(request: TokenCreationRequest):
     try:
@@ -291,12 +405,43 @@ async def create_token(request: TokenCreationRequest):
         # --- Instruction 4: MintTo (full supply → creator ATA) ---
         mint_to_ix = build_mint_to_ix(mint_pubkey, ata_pubkey, payer_pubkey, mint_amount)
         
+        # --- Instruction 5: Create Metaplex Token Metadata ---
+        metadata_pda = derive_metadata_pda(mint_pubkey)
+        mint_address_str = str(mint_pubkey)
+        
+        # Build the off-chain metadata URI (served by our backend)
+        backend_url = os.environ.get('BACKEND_PUBLIC_URL', '')
+        if not backend_url:
+            # Fallback: use the frontend URL since /api/ routes are proxied
+            backend_url = os.environ.get('CORS_ORIGINS', '').split(',')[0].strip()
+            if backend_url == '*':
+                backend_url = ''
+        metadata_uri = f"{backend_url}/api/metadata/{mint_address_str}.json" if backend_url else ""
+        
+        # If user supplied an image URL, use that as a direct URI hint
+        # The on-chain URI points to the JSON metadata endpoint
+        logger.info(f"  Metadata PDA: {metadata_pda}")
+        logger.info(f"  Metadata URI: {metadata_uri}")
+        
+        create_metadata_ix = build_create_metadata_v3_ix(
+            metadata_pda=metadata_pda,
+            mint=mint_pubkey,
+            mint_authority=payer_pubkey,
+            payer=payer_pubkey,
+            update_authority=payer_pubkey,
+            name=request.metadata.name,
+            symbol=request.metadata.symbol,
+            uri=metadata_uri,
+            is_mutable=not request.revoke_update_authority,
+        )
+        
         # --- Build instruction list ---
         instructions = [
-            create_account_ix,    # 1. Create mint account
-            initialize_mint_ix,   # 2. Initialize mint
-            create_ata_ix,        # 3. Create ATA for creator
-            mint_to_ix,           # 4. Mint full supply to creator ATA
+            create_account_ix,      # 1. Create mint account
+            initialize_mint_ix,     # 2. Initialize mint
+            create_metadata_ix,     # 3. Create Metaplex metadata (must be after initMint)
+            create_ata_ix,          # 4. Create ATA for creator
+            mint_to_ix,             # 5. Mint full supply to creator ATA
         ]
         
         # --- Instruction 5+: Revoke authorities AFTER minting ---
@@ -350,6 +495,8 @@ async def create_token(request: TokenCreationRequest):
         doc = token_record.model_dump()
         doc['created_at'] = doc['created_at'].isoformat()
         doc['ata'] = ata_address
+        doc['metadata_pda'] = str(metadata_pda)
+        doc['metadata_uri'] = metadata_uri
         await db.tokens.insert_one(doc)
         
         logger.info(f"  Transaction built with {len(instructions)} instructions")
@@ -358,6 +505,8 @@ async def create_token(request: TokenCreationRequest):
             "transaction": base64.b64encode(tx_serialized).decode('utf-8'),
             "mint": mint_address,
             "ata": ata_address,
+            "metadataPda": str(metadata_pda),
+            "metadataUri": metadata_uri,
             "mintKeypair": base64.b64encode(mint_secret).decode('utf-8'),
             "totalMinted": str(mint_amount),
             "message": "Transaction ready for signing"
