@@ -10,6 +10,20 @@ Build a Solana token launchpad with free token creation (no platform fees), wall
 
 ## What's Implemented (Feb 2026)
 
+### Safety-Critical Hardening (Feb 2026) — All P0 Controls Live
+**Default = DEVNET, mainnet is opt-in.** Prevents accidental real-SOL spending.
+- `NetworkContext` (`/app/frontend/src/contexts/NetworkContext.js`): persisted in localStorage; default `devnet`; tracks `testMode` and a 200-entry signed-tx audit log
+- `SolanaProvider` derives RPC endpoint from network: `api.devnet.solana.com` (default) vs Helius mainnet (opt-in). Re-keys on network change for clean remount.
+- `NetworkSwitcher` (header): one-click switch to devnet (safe), devnet→mainnet shows explicit warning dialog (`mainnet-warning-dialog`) with safety bullets and red "I understand — enable Mainnet" button.
+- `MainnetWarningBanner`: always-visible red banner when mainnet active + yellow Test Mode banner when test mode on.
+- **Test Mode**: global toggle (`test-mode-toggle-btn`); when ON, all signing is blocked at the hook level (`useTokenOperations`, `useAirdropOperations`) with a clear error toast.
+- **Simulation-first**: every transaction is simulated via `connection.simulateTransaction({ sigVerify: false, replaceRecentBlockhash: true, accounts: { addresses: [payer] } })` BEFORE the wallet prompt opens. The accurate SOL cost = `preBalance - postBalance` (rent + fee + everything).
+- **`SafetyConfirmModal`**: reusable cost-preview modal shown before EVERY wallet.signTransaction. Shows network, wallet address, total SOL, post-sign balance, fee breakdown (network fee / rent / compute units), action context. User MUST click "Confirm & Sign" — automation cannot bypass.
+- **No auto-retry on mainnet**: `sendRawTransaction` uses `maxRetries: 0` on mainnet (was 3). Airdrop per-batch retry is `0` on mainnet, `1` on devnet.
+- **Signed-tx audit log**: every successful tx records `{timestamp, network, action, mint, wallet, signature, lamports, sol}` to localStorage (`solaunch.txLog`). Capped at 200 entries.
+- **ErrorBoundary**: catches React errors and shows a recovery UI without leaking stack traces server-side.
+- **Existing flows untouched**: token creation tx structure, instruction builders, metadata logic, airdrop instruction builders, IPFS upload — all unchanged. Only safety guards were added around them.
+
 ### Airdrop Functionality (Feb 2026) — P1 Complete
 - New page `/app/frontend/src/pages/Airdrop.js` (full rewrite)
 - Token source: launchpad dropdown (from MongoDB) OR any SPL mint (manual entry)
