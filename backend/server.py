@@ -53,6 +53,91 @@ elif 'devnet' in SOLANA_RPC_URL.lower():
 else:
     logger.info("Using custom RPC endpoint")
 
+# ─── Pinata IPFS Configuration ──────────────────────────────────────────
+PINATA_JWT = os.environ.get('PINATA_JWT', '')
+PINATA_API_URL = "https://api.pinata.cloud"
+PINATA_GATEWAY = "https://gateway.pinata.cloud/ipfs"
+
+if PINATA_JWT:
+    logger.info("✓ Pinata IPFS configured")
+else:
+    logger.warning("⚠ Pinata JWT not set – IPFS uploads disabled")
+
+
+async def pin_image_to_ipfs(image_url: str, token_name: str) -> str:
+    """Download an image from URL and pin it to IPFS via Pinata pinFileToIPFS."""
+    if not PINATA_JWT:
+        raise HTTPException(status_code=503, detail="Pinata JWT not configured")
+
+    async with aiohttp.ClientSession() as session:
+        # Download image (follow redirects, accept any content)
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; TokenLaunchpad/1.0)"}
+        async with session.get(image_url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=30), headers=headers) as img_resp:
+            if img_resp.status != 200:
+                raise HTTPException(status_code=400, detail=f"Cannot fetch image from {image_url} (HTTP {img_resp.status})")
+            image_bytes = await img_resp.read()
+            content_type = img_resp.headers.get('Content-Type', 'application/octet-stream')
+            # Some servers return text/plain for images served via CDN
+            if 'text' in content_type or 'html' in content_type:
+                content_type = 'image/png'
+
+        # Determine file extension
+        ext_map = {'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif',
+                   'image/webp': '.webp', 'image/svg+xml': '.svg', 'application/octet-stream': '.png'}
+        ext = ext_map.get(content_type.split(';')[0].strip(), '.png')
+        filename = f"{token_name.replace(' ', '_').lower()}{ext}"
+
+        # Build multipart form for Pinata pinFileToIPFS
+        form = aiohttp.FormData()
+        form.add_field('file', image_bytes, filename=filename, content_type=content_type)
+        form.add_field('pinataMetadata', f'{{"name":"{filename}"}}')
+        form.add_field('pinataOptions', '{"cidVersion":1}')
+
+        async with session.post(
+            f"{PINATA_API_URL}/pinning/pinFileToIPFS",
+            headers={"Authorization": f"Bearer {PINATA_JWT}"},
+            data=form,
+            timeout=aiohttp.ClientTimeout(total=60)
+        ) as resp:
+            if resp.status != 200:
+                err_text = await resp.text()
+                logger.error(f"Pinata pinFile error: {err_text}")
+                raise HTTPException(status_code=503, detail=f"Pinata upload failed: {err_text}")
+            data = await resp.json()
+            ipfs_hash = data['IpfsHash']
+            logger.info(f"  Image pinned: ipfs://{ipfs_hash}")
+            return f"ipfs://{ipfs_hash}"
+
+
+async def pin_json_to_ipfs(metadata: dict, token_name: str) -> str:
+    """Pin metadata JSON to IPFS via Pinata pinJSONToIPFS."""
+    if not PINATA_JWT:
+        raise HTTPException(status_code=503, detail="Pinata JWT not configured")
+
+    payload = {
+        "pinataContent": metadata,
+        "pinataMetadata": {"name": f"{token_name}_metadata.json"},
+        "pinataOptions": {"cidVersion": 1}
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{PINATA_API_URL}/pinning/pinJSONToIPFS",
+            headers={
+                "Authorization": f"Bearer {PINATA_JWT}",
+                "Content-Type": "application/json"
+            },
+            json=payload
+        ) as resp:
+            if resp.status != 200:
+                err_text = await resp.text()
+                logger.error(f"Pinata pinJSON error: {err_text}")
+                raise HTTPException(status_code=503, detail=f"Pinata JSON upload failed: {err_text}")
+            data = await resp.json()
+            ipfs_hash = data['IpfsHash']
+            logger.info(f"  Metadata pinned: ipfs://{ipfs_hash}")
+            return f"ipfs://{ipfs_hash}"
+
 class TokenMetadata(BaseModel):
     name: str
     symbol: str
@@ -409,18 +494,55 @@ async def create_token(request: TokenCreationRequest):
         metadata_pda = derive_metadata_pda(mint_pubkey)
         mint_address_str = str(mint_pubkey)
         
-        # Build the off-chain metadata URI (served by our backend)
-        backend_url = os.environ.get('BACKEND_PUBLIC_URL', '')
-        if not backend_url:
-            # Fallback: use the frontend URL since /api/ routes are proxied
-            backend_url = os.environ.get('CORS_ORIGINS', '').split(',')[0].strip()
-            if backend_url == '*':
-                backend_url = ''
-        metadata_uri = f"{backend_url}/api/metadata/{mint_address_str}.json" if backend_url else ""
-        
-        # If user supplied an image URL, use that as a direct URI hint
-        # The on-chain URI points to the JSON metadata endpoint
+        # ─── Upload image + metadata to IPFS via Pinata ───────────────
+        image_ipfs_uri = ""
+        if request.metadata.image:
+            try:
+                image_ipfs_uri = await pin_image_to_ipfs(
+                    request.metadata.image, request.metadata.name
+                )
+            except Exception as img_err:
+                logger.warning(f"  Image IPFS upload failed: {img_err}. Using original URL.")
+                image_ipfs_uri = request.metadata.image
+        elif request.metadata.logo:
+            try:
+                image_ipfs_uri = await pin_image_to_ipfs(
+                    request.metadata.logo, request.metadata.name
+                )
+            except Exception as img_err:
+                logger.warning(f"  Logo IPFS upload failed: {img_err}. Using original URL.")
+                image_ipfs_uri = request.metadata.logo
+
+        social_links = {
+            k: v for k, v in {
+                "twitter": request.metadata.twitter,
+                "telegram": request.metadata.telegram,
+                "website": request.metadata.website,
+            }.items() if v
+        }
+
+        metadata_json = {
+            "name": request.metadata.name,
+            "symbol": request.metadata.symbol,
+            "description": request.metadata.description or "",
+            "image": image_ipfs_uri,
+            "external_url": request.metadata.website or "",
+            "attributes": [],
+            "properties": {
+                "links": social_links,
+                "category": "currency",
+            },
+        }
+
+        try:
+            metadata_uri = await pin_json_to_ipfs(metadata_json, request.metadata.name)
+        except Exception as json_err:
+            logger.warning(f"  Metadata IPFS upload failed: {json_err}. Falling back to backend URI.")
+            backend_url = os.environ.get('BACKEND_PUBLIC_URL', '')
+            metadata_uri = f"{backend_url}/api/metadata/{mint_address_str}.json" if backend_url else ""
+
         logger.info(f"  Metadata PDA: {metadata_pda}")
+        logger.info(f"  Image URI:    {image_ipfs_uri}")
         logger.info(f"  Metadata URI: {metadata_uri}")
         
         create_metadata_ix = build_create_metadata_v3_ix(
@@ -497,6 +619,7 @@ async def create_token(request: TokenCreationRequest):
         doc['ata'] = ata_address
         doc['metadata_pda'] = str(metadata_pda)
         doc['metadata_uri'] = metadata_uri
+        doc['image_ipfs_uri'] = image_ipfs_uri
         await db.tokens.insert_one(doc)
         
         logger.info(f"  Transaction built with {len(instructions)} instructions")
@@ -507,6 +630,7 @@ async def create_token(request: TokenCreationRequest):
             "ata": ata_address,
             "metadataPda": str(metadata_pda),
             "metadataUri": metadata_uri,
+            "imageUri": image_ipfs_uri,
             "mintKeypair": base64.b64encode(mint_secret).decode('utf-8'),
             "totalMinted": str(mint_amount),
             "message": "Transaction ready for signing"

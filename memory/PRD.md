@@ -48,8 +48,6 @@ Build a Solana token launchpad with free token creation (no platform fees), wall
 
 ## Backlog
 - P0: Actual airdrop transaction execution (currently UI-only)
-- P1: IPFS/Arweave metadata upload
-- P1: Token metadata program (Metaplex) integration
-- P2: Transaction history page
+- P1: Transaction history page
 - P2: Token analytics dashboard
 - P2: Liquidity pool integration
