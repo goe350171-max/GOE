@@ -183,14 +183,28 @@ const TokenExplorer = () => {
                       )}
                     </td>
                     <td className="px-6 py-4 text-center">
-                      <button
-                        onClick={() => openInExplorer(token.mint)}
-                        data-testid={`view-explorer-${index}`}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium border border-zinc-300 hover:bg-black hover:text-white hover:border-black transition-all duration-200"
-                      >
-                        <span>View</span>
-                        <ArrowSquareOut size={14} weight="bold" />
-                      </button>
+                      <div className="flex items-center justify-center gap-2">
+                        <a
+                          href={`https://explorer.solana.com/address/${token.mint}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          data-testid={`view-explorer-${index}`}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-zinc-300 hover:bg-black hover:text-white hover:border-black transition-all duration-200"
+                        >
+                          Explorer
+                          <ArrowSquareOut size={12} weight="bold" />
+                        </a>
+                        <a
+                          href={`https://solscan.io/token/${token.mint}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          data-testid={`view-solscan-${index}`}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-zinc-300 hover:bg-black hover:text-white hover:border-black transition-all duration-200"
+                        >
+                          Solscan
+                          <ArrowSquareOut size={12} weight="bold" />
+                        </a>
+                      </div>
                     </td>
                   </tr>
                 ))}

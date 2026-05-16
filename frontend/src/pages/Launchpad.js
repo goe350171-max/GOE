@@ -1,22 +1,36 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { useTokenOperations } from '../hooks/useTokenOperations';
 import { Label } from '../components/ui/label';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
 import { Button } from '../components/ui/button';
 import { Switch } from '../components/ui/switch';
-import { Coins, Image as ImageIcon, Globe, TwitterLogo, TelegramLogo, Check, X, UploadSimple, Trash } from '@phosphor-icons/react';
+import { Coins, Image as ImageIcon, Globe, TwitterLogo, TelegramLogo, Check, X, UploadSimple, Trash, Warning } from '@phosphor-icons/react';
 import axios from 'axios';
 import { toast } from 'sonner';
+import SuccessModal from '../components/SuccessModal';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
 const TokenCreationForm = () => {
-  const { connected } = useWallet();
+  const { connected, publicKey, disconnect } = useWallet();
   const { createToken, loading } = useTokenOperations();
   const fileInputRef = useRef(null);
+
+  // Success modal state
+  const [successData, setSuccessData] = useState(null);
+
+  // Wallet disconnect detection
+  const prevConnected = useRef(connected);
+  useEffect(() => {
+    if (prevConnected.current && !connected) {
+      toast.info('Wallet disconnected');
+    }
+    prevConnected.current = connected;
+  }, [connected]);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -152,6 +166,17 @@ const TokenCreationForm = () => {
     });
 
     if (result?.success) {
+      // Show success modal with all the data
+      setSuccessData({
+        mint: result.mint,
+        ata: result.ata,
+        signature: result.signature,
+        totalSupply: result.totalSupply,
+        verified: result.verified,
+        imageUri: finalImageUri,
+        explorerUrl: result.explorerUrl,
+      });
+
       setFormData({
         name: '', symbol: '', decimals: 9, totalSupply: '',
         description: '', image: '', logo: '',
@@ -481,13 +506,21 @@ const TokenCreationForm = () => {
             </Button>
 
             {!connected && (
-              <p className="text-xs text-center text-zinc-500 mt-4">
-                Connect your wallet to create tokens
-              </p>
+              <div className="mt-6 border border-zinc-300 p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Warning size={18} weight="bold" className="text-zinc-500" />
+                  <p className="text-sm font-semibold text-zinc-700">Wallet Required</p>
+                </div>
+                <p className="text-xs text-zinc-500 mb-3">Connect your Phantom or Solflare wallet to create tokens on mainnet.</p>
+                <WalletMultiButton data-testid="connect-wallet-sidebar" />
+              </div>
             )}
           </div>
         </div>
       </form>
+
+      {/* Success Modal */}
+      <SuccessModal data={successData} onClose={() => setSuccessData(null)} />
     </div>
   );
 };

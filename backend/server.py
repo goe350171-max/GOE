@@ -1,7 +1,11 @@
-from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File
+from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File, Request
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from starlette.responses import JSONResponse
 import os
 import logging
 from pathlib import Path
@@ -21,6 +25,8 @@ from solders.instruction import Instruction, AccountMeta
 from solders.rpc.responses import GetLatestBlockhashResp
 import asyncio
 import aiohttp
+import struct
+import time
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -29,10 +35,19 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
+# ─── Rate limiter ────────────────────────────────────────────────────────
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI()
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(status_code=429, content={"detail": "Too many requests. Please wait before trying again."})
+
+app.state.limiter = limiter
 api_router = APIRouter(prefix="/api")
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
@@ -42,16 +57,21 @@ ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH
 TOKEN_METADATA_PROGRAM_ID = Pubkey.from_string("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
 
 SOLANA_RPC_URL = os.environ.get('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+SOLANA_RPC_FALLBACKS = [
+    SOLANA_RPC_URL,
+    'https://api.mainnet-beta.solana.com',
+]
+# Deduplicate while preserving order
+SOLANA_RPC_FALLBACKS = list(dict.fromkeys(SOLANA_RPC_FALLBACKS))
 
 # Log RPC connection at startup (mask API key for security)
 rpc_display = SOLANA_RPC_URL.split('api-key=')[0] + 'api-key=***' if 'api-key=' in SOLANA_RPC_URL else SOLANA_RPC_URL
-logger.info(f"Solana RPC configured: {rpc_display}")
+logger.info(f"Solana RPC primary: {rpc_display}")
+logger.info(f"RPC failover endpoints: {len(SOLANA_RPC_FALLBACKS)}")
 if 'helius' in SOLANA_RPC_URL.lower():
-    logger.info("✓ Using Helius RPC (Mainnet)")
+    logger.info("Using Helius RPC (Mainnet)")
 elif 'devnet' in SOLANA_RPC_URL.lower():
-    logger.info("⚠ Using Devnet RPC")
-else:
-    logger.info("Using custom RPC endpoint")
+    logger.info("Using Devnet RPC")
 
 # ─── Pinata IPFS Configuration ──────────────────────────────────────────
 PINATA_JWT = os.environ.get('PINATA_JWT', '')
@@ -191,48 +211,53 @@ class TokenRecord(BaseModel):
     on_chain_supply: Optional[str] = None
 
 async def get_latest_blockhash():
-    """Get latest blockhash from Solana RPC with error handling"""
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            SOLANA_RPC_URL,
-            json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getLatestBlockhash",
-                "params": [{"commitment": "finalized"}]
-            },
-            headers={
-                "Content-Type": "application/json"
-            }
-        ) as resp:
-            if resp.status == 403:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Solana RPC endpoint rate limit exceeded. Please use a dedicated RPC endpoint (Helius, QuickNode, or Alchemy) for production. Set SOLANA_RPC_URL in backend/.env"
-                )
-            
-            if resp.status != 200:
-                error_text = await resp.text()
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Solana RPC error ({resp.status}): {error_text}"
-                )
-            
-            data = await resp.json()
-            if 'result' in data and 'value' in data['result']:
-                blockhash_str = data['result']['value']['blockhash']
-                return Hash.from_string(blockhash_str)
-            
-            if 'error' in data:
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Solana RPC error: {data['error']}"
-                )
-            
-            raise HTTPException(
-                status_code=503,
-                detail="Failed to get blockhash from Solana RPC"
-            )
+    """Get latest blockhash with RPC failover. Tries each endpoint in order."""
+    last_error = None
+    for rpc_url in SOLANA_RPC_FALLBACKS:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    rpc_url,
+                    json={"jsonrpc": "2.0", "id": 1, "method": "getLatestBlockhash", "params": [{"commitment": "finalized"}]},
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=15)
+                ) as resp:
+                    if resp.status != 200:
+                        last_error = f"RPC {rpc_url[:40]}... returned {resp.status}"
+                        logger.warning(last_error)
+                        continue
+
+                    data = await resp.json()
+                    if 'result' in data and 'value' in data['result']:
+                        blockhash_str = data['result']['value']['blockhash']
+                        return Hash.from_string(blockhash_str)
+
+                    if 'error' in data:
+                        last_error = f"RPC error: {data['error']}"
+                        logger.warning(last_error)
+                        continue
+        except asyncio.TimeoutError:
+            last_error = f"RPC {rpc_url[:40]}... timed out"
+            logger.warning(last_error)
+        except Exception as e:
+            last_error = str(e)
+            logger.warning(f"RPC {rpc_url[:40]}... failed: {last_error}")
+
+    raise HTTPException(status_code=503, detail=f"All RPC endpoints failed. Last error: {last_error}")
+
+
+async def pin_with_retry(upload_fn, *args, max_retries=3, delay=2):
+    """Retry wrapper for Pinata IPFS uploads."""
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            return await upload_fn(*args)
+        except Exception as e:
+            last_error = e
+            logger.warning(f"IPFS upload attempt {attempt}/{max_retries} failed: {e}")
+            if attempt < max_retries:
+                await asyncio.sleep(delay * attempt)
+    raise last_error
 
 @api_router.get("/")
 async def root():
@@ -244,7 +269,8 @@ MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
 
 
 @api_router.post("/upload-image")
-async def upload_image(file: UploadFile = File(...)):
+@limiter.limit("10/minute")
+async def upload_image(request: Request, file: UploadFile = File(...)):
     """Upload an image file directly to Pinata IPFS. Returns the IPFS URI."""
     if not PINATA_JWT:
         raise HTTPException(status_code=503, detail="Pinata IPFS not configured")
@@ -491,11 +517,13 @@ async def get_token_metadata_json(mint_address: str):
 
 
 @api_router.post("/tokens/create")
-async def create_token(request: TokenCreationRequest):
+@limiter.limit("5/minute")
+async def create_token(request: Request, payload: TokenCreationRequest):
     try:
-        logger.info(f"Creating token: {request.metadata.name}")
+        start_time = time.time()
+        logger.info(f"Creating token: {payload.metadata.name}")
         
-        payer_pubkey = Pubkey.from_string(request.payer)
+        payer_pubkey = Pubkey.from_string(payload.payer)
         mint_keypair = Keypair()
         mint_pubkey = mint_keypair.pubkey()
         
@@ -511,8 +539,8 @@ async def create_token(request: TokenCreationRequest):
         logger.info(f"  ATA:     {ata_pubkey}")
         
         # --- Calculate mint amount with BigInt-safe integer math ---
-        decimals = request.metadata.decimals
-        total_supply = request.metadata.total_supply
+        decimals = payload.metadata.decimals
+        total_supply = payload.metadata.total_supply
         mint_amount = total_supply * (10 ** decimals)
         
         logger.info(f"  Supply:  {total_supply}")
@@ -559,39 +587,39 @@ async def create_token(request: TokenCreationRequest):
         metadata_pda = derive_metadata_pda(mint_pubkey)
         mint_address_str = str(mint_pubkey)
         
-        # ─── Upload image + metadata to IPFS via Pinata ───────────────
+        # ─── Upload image + metadata to IPFS via Pinata (with retry) ────
         image_ipfs_uri = ""
-        if request.metadata.image:
+        if payload.metadata.image:
             try:
-                image_ipfs_uri = await pin_image_to_ipfs(
-                    request.metadata.image, request.metadata.name
+                image_ipfs_uri = await pin_with_retry(
+                    pin_image_to_ipfs, payload.metadata.image, payload.metadata.name
                 )
             except Exception as img_err:
-                logger.warning(f"  Image IPFS upload failed: {img_err}. Using original URL.")
-                image_ipfs_uri = request.metadata.image
-        elif request.metadata.logo:
+                logger.warning(f"  Image IPFS upload failed after retries: {img_err}. Using original URL.")
+                image_ipfs_uri = payload.metadata.image
+        elif payload.metadata.logo:
             try:
-                image_ipfs_uri = await pin_image_to_ipfs(
-                    request.metadata.logo, request.metadata.name
+                image_ipfs_uri = await pin_with_retry(
+                    pin_image_to_ipfs, payload.metadata.logo, payload.metadata.name
                 )
             except Exception as img_err:
-                logger.warning(f"  Logo IPFS upload failed: {img_err}. Using original URL.")
-                image_ipfs_uri = request.metadata.logo
+                logger.warning(f"  Logo IPFS upload failed after retries: {img_err}. Using original URL.")
+                image_ipfs_uri = payload.metadata.logo
 
         social_links = {
             k: v for k, v in {
-                "twitter": request.metadata.twitter,
-                "telegram": request.metadata.telegram,
-                "website": request.metadata.website,
+                "twitter": payload.metadata.twitter,
+                "telegram": payload.metadata.telegram,
+                "website": payload.metadata.website,
             }.items() if v
         }
 
         metadata_json = {
-            "name": request.metadata.name,
-            "symbol": request.metadata.symbol,
-            "description": request.metadata.description or "",
+            "name": payload.metadata.name,
+            "symbol": payload.metadata.symbol,
+            "description": payload.metadata.description or "",
             "image": image_ipfs_uri,
-            "external_url": request.metadata.website or "",
+            "external_url": payload.metadata.website or "",
             "attributes": [],
             "properties": {
                 "links": social_links,
@@ -600,9 +628,11 @@ async def create_token(request: TokenCreationRequest):
         }
 
         try:
-            metadata_uri = await pin_json_to_ipfs(metadata_json, request.metadata.name)
+            metadata_uri = await pin_with_retry(
+                pin_json_to_ipfs, metadata_json, payload.metadata.name
+            )
         except Exception as json_err:
-            logger.warning(f"  Metadata IPFS upload failed: {json_err}. Falling back to backend URI.")
+            logger.warning(f"  Metadata IPFS upload failed after retries: {json_err}. Falling back to backend URI.")
             backend_url = os.environ.get('BACKEND_PUBLIC_URL', '')
             metadata_uri = f"{backend_url}/api/metadata/{mint_address_str}.json" if backend_url else ""
 
@@ -616,10 +646,10 @@ async def create_token(request: TokenCreationRequest):
             mint_authority=payer_pubkey,
             payer=payer_pubkey,
             update_authority=payer_pubkey,
-            name=request.metadata.name,
-            symbol=request.metadata.symbol,
+            name=payload.metadata.name,
+            symbol=payload.metadata.symbol,
             uri=metadata_uri,
-            is_mutable=not request.revoke_update_authority,
+            is_mutable=not payload.revoke_update_authority,
         )
         
         # --- Build instruction list ---
@@ -632,13 +662,13 @@ async def create_token(request: TokenCreationRequest):
         ]
         
         # --- Instruction 5+: Revoke authorities AFTER minting ---
-        if request.revoke_mint_authority:
+        if payload.revoke_mint_authority:
             instructions.append(
                 build_set_authority_ix(mint_pubkey, payer_pubkey, 0, None)
             )
             logger.info("  + Revoke mint authority")
         
-        if request.revoke_freeze_authority:
+        if payload.revoke_freeze_authority:
             instructions.append(
                 build_set_authority_ix(mint_pubkey, payer_pubkey, 1, None)
             )
@@ -661,22 +691,22 @@ async def create_token(request: TokenCreationRequest):
         # --- Save token record ---
         token_record = TokenRecord(
             mint=mint_address,
-            name=request.metadata.name,
-            symbol=request.metadata.symbol,
+            name=payload.metadata.name,
+            symbol=payload.metadata.symbol,
             decimals=decimals,
             total_supply=total_supply,
-            description=request.metadata.description,
-            image=request.metadata.image,
-            logo=request.metadata.logo,
+            description=payload.metadata.description,
+            image=payload.metadata.image,
+            logo=payload.metadata.logo,
             social_links={
-                "twitter": request.metadata.twitter,
-                "telegram": request.metadata.telegram,
-                "website": request.metadata.website
+                "twitter": payload.metadata.twitter,
+                "telegram": payload.metadata.telegram,
+                "website": payload.metadata.website
             },
-            creator=request.payer,
-            mint_authority_revoked=request.revoke_mint_authority,
-            freeze_authority_revoked=request.revoke_freeze_authority,
-            update_authority_revoked=request.revoke_update_authority
+            creator=payload.payer,
+            mint_authority_revoked=payload.revoke_mint_authority,
+            freeze_authority_revoked=payload.revoke_freeze_authority,
+            update_authority_revoked=payload.revoke_update_authority
         )
         
         doc = token_record.model_dump()
@@ -687,7 +717,24 @@ async def create_token(request: TokenCreationRequest):
         doc['image_ipfs_uri'] = image_ipfs_uri
         await db.tokens.insert_one(doc)
         
-        logger.info(f"  Transaction built with {len(instructions)} instructions")
+        elapsed = round(time.time() - start_time, 2)
+        logger.info(f"  Transaction built: {len(instructions)} ix, {elapsed}s elapsed")
+        
+        # Analytics event
+        await db.analytics.insert_one({
+            "event": "token_created",
+            "mint": mint_address,
+            "name": payload.metadata.name,
+            "symbol": payload.metadata.symbol,
+            "creator": payload.payer,
+            "ipfs_image": bool(image_ipfs_uri.startswith("ipfs://")),
+            "ipfs_metadata": bool(metadata_uri.startswith("ipfs://")),
+            "revoke_mint": payload.revoke_mint_authority,
+            "revoke_freeze": payload.revoke_freeze_authority,
+            "instructions": len(instructions),
+            "elapsed_seconds": elapsed,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
         
         return {
             "transaction": base64.b64encode(tx_serialized).decode('utf-8'),
@@ -698,11 +745,14 @@ async def create_token(request: TokenCreationRequest):
             "imageUri": image_ipfs_uri,
             "mintKeypair": base64.b64encode(mint_secret).decode('utf-8'),
             "totalMinted": str(mint_amount),
+            "explorerUrl": f"https://explorer.solana.com/address/{mint_address}",
             "message": "Transaction ready for signing"
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error creating token: {str(e)}")
+        logger.error(f"Token creation failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
 
 @api_router.post("/tokens/update-signature")
@@ -791,10 +841,11 @@ async def get_token(mint: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 @api_router.post("/tokens/revoke-authority")
-async def revoke_authority(request: AuthorityRevocationRequest):
+@limiter.limit("5/minute")
+async def revoke_authority(request: Request, payload: AuthorityRevocationRequest):
     try:
-        payer_pubkey = Pubkey.from_string(request.payer)
-        mint_pubkey = Pubkey.from_string(request.mint)
+        payer_pubkey = Pubkey.from_string(payload.payer)
+        mint_pubkey = Pubkey.from_string(payload.mint)
         
         recent_blockhash = await get_latest_blockhash()
         
@@ -805,7 +856,7 @@ async def revoke_authority(request: AuthorityRevocationRequest):
             "close": 3
         }
         
-        authority_type_byte = authority_type_map.get(request.authority_type, 0)
+        authority_type_byte = authority_type_map.get(payload.authority_type, 0)
         
         set_authority_data = bytes([6]) + \
                             authority_type_byte.to_bytes(1, 'little') + \
@@ -828,15 +879,15 @@ async def revoke_authority(request: AuthorityRevocationRequest):
         
         tx = SoldersTransaction.new_unsigned(msg)
         
-        field_name = f"{request.authority_type}_authority_revoked"
+        field_name = f"{payload.authority_type}_authority_revoked"
         await db.tokens.update_one(
-            {"mint": request.mint},
+            {"mint": payload.mint},
             {"$set": {field_name: True}}
         )
         
         return {
             "transaction": base64.b64encode(bytes(tx)).decode('utf-8'),
-            "message": f"{request.authority_type} authority revocation transaction ready"
+            "message": f"{payload.authority_type} authority revocation transaction ready"
         }
         
     except Exception as e:
