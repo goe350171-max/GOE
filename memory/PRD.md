@@ -8,6 +8,14 @@ Build a Solana token launchpad with free token creation (no platform fees), wall
 - **Backend**: FastAPI + Python (solders) + MongoDB
 - **RPC**: Helius mainnet-beta
 
+## What's Implemented (Feb 2026)
+
+### Clipboard Fallback (Feb 2026)
+- Added `/app/frontend/src/utils/clipboard.js` with `copyText()` utility
+- Tries `navigator.clipboard.writeText` first; falls back to hidden textarea + `document.execCommand('copy')` for sandboxed/iframe preview environments
+- `SuccessModal.js` updated to use the new utility and emit success/error toasts
+- Verified in preview iframe — falls back to `execCommand` path with `ok: true`
+
 ## What's Implemented (May 2026)
 
 ### Token Creation (Full SPL Minting Flow)

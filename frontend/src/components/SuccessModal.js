@@ -2,15 +2,20 @@ import React from 'react';
 import { Check, ArrowSquareOut, Copy, X } from '@phosphor-icons/react';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
+import { copyText } from '../utils/clipboard';
 
 const SuccessModal = ({ data, onClose }) => {
   if (!data) return null;
 
   const { mint, ata, signature, explorerUrl, totalSupply, verified, imageUri } = data;
 
-  const copyToClipboard = (text, label) => {
-    navigator.clipboard.writeText(text);
-    toast.success(`${label} copied!`);
+  const copyToClipboard = async (text, label) => {
+    const ok = await copyText(text);
+    if (ok) {
+      toast.success(`${label} copied!`);
+    } else {
+      toast.error(`Copy failed. Please copy manually: ${text}`);
+    }
   };
 
   const truncate = (str) => str ? `${str.slice(0, 6)}...${str.slice(-6)}` : '';
