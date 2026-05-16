@@ -129,11 +129,17 @@ const TokenExplorer = () => {
                   >
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        {token.logo ? (
+                        {(token.image || token.logo) ? (
                           <img
-                            src={token.logo}
+                            src={(() => {
+                              const src = token.image || token.logo;
+                              return src.startsWith('ipfs://')
+                                ? `https://gateway.pinata.cloud/ipfs/${src.replace('ipfs://', '')}`
+                                : src;
+                            })()}
                             alt={token.name}
                             className="w-10 h-10 border border-zinc-300 object-cover"
+                            onError={(e) => { e.target.style.display = 'none'; }}
                           />
                         ) : (
                           <div className="w-10 h-10 bg-zinc-200 border border-zinc-300 flex items-center justify-center">
