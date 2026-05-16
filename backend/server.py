@@ -100,6 +100,9 @@ class TokenRecord(BaseModel):
     update_authority_revoked: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     transaction_signature: Optional[str] = None
+    ata: Optional[str] = None
+    on_chain_verified: bool = False
+    on_chain_supply: Optional[str] = None
 
 async def get_latest_blockhash():
     """Get latest blockhash from Solana RPC with error handling"""
@@ -365,14 +368,57 @@ async def create_token(request: TokenCreationRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 @api_router.post("/tokens/update-signature")
-async def update_token_signature(mint: str, signature: str):
+async def update_token_signature(mint: str, signature: str, verified: bool = False, on_chain_supply: str = "0"):
     try:
+        update_fields = {
+            "transaction_signature": signature,
+            "on_chain_verified": verified,
+            "on_chain_supply": on_chain_supply,
+        }
         await db.tokens.update_one(
             {"mint": mint},
-            {"$set": {"transaction_signature": signature}}
+            {"$set": update_fields}
         )
+        logger.info(f"Token {mint} updated: sig={signature[:12]}... verified={verified} supply={on_chain_supply}")
         return {"success": True}
     except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@api_router.get("/tokens/verify/{mint_address}")
+async def verify_token_on_chain(mint_address: str):
+    """Query Solana RPC directly to verify on-chain state of a mint."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Fetch mint account info
+            async with session.post(
+                SOLANA_RPC_URL,
+                json={
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "getAccountInfo",
+                    "params": [mint_address, {"encoding": "jsonParsed"}]
+                },
+                headers={"Content-Type": "application/json"}
+            ) as resp:
+                data = await resp.json()
+        
+        account_info = data.get("result", {}).get("value")
+        if not account_info:
+            return {"exists": False, "mint": mint_address}
+        
+        parsed = account_info.get("data", {}).get("parsed", {}).get("info", {})
+        
+        return {
+            "exists": True,
+            "mint": mint_address,
+            "supply": parsed.get("supply", "0"),
+            "decimals": parsed.get("decimals", 0),
+            "mintAuthority": parsed.get("mintAuthority"),
+            "freezeAuthority": parsed.get("freezeAuthority"),
+            "isInitialized": parsed.get("isInitialized", False),
+        }
+    except Exception as e:
+        logger.error(f"Verify error for {mint_address}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @api_router.get("/tokens", response_model=List[TokenRecord])
