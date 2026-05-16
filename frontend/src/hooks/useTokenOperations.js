@@ -312,50 +312,73 @@ export const useTokenOperations = () => {
         }
       }
 
-      // ── 3. Simulate to get accurate SOL cost (skipped in SAFE MODE) ────
+      // ── 3. Simulate to get accurate SOL cost (ADVISORY ONLY) ──────────
+      // Simulation is non-blocking. If it throws "Invalid arguments" or any
+      // other RPC error against this partially-signed transaction (Helius is
+      // known to reject this combination), we LOG and CONTINUE to signing.
+      // The user still sees a cost preview — falling back to the static
+      // rent estimate when on-chain simulation is unavailable.
+      const STATIC_SIM = {
+        ok: true,
+        soft: true, // marker: not a real on-chain simulation
+        lamports: 9_127_600,
+        sol: 0.0091276,
+        baseFeeLamports: 10_000,
+        rentLamports: 9_117_600,
+        computeUnits: 0,
+        logs: [],
+        preBalanceLamports: 0,
+        postBalanceLamports: 0,
+      };
+
       let simulation;
       if (safeMode) {
-        // Provide a synthetic "ok" simulation so the confirm modal still
-        // shows the rent-estimate breakdown without an extra RPC round-trip.
-        simulation = {
-          ok: true,
-          lamports: 9_127_600,
-          sol: 0.0091276,
-          baseFeeLamports: 10_000,
-          rentLamports: 9_117_600,
-          computeUnits: 0,
-          logs: [],
-          preBalanceLamports: 0,
-          postBalanceLamports: 0,
-        };
-        diagPush('simulate', 'ok', { mode: 'safe-mode-bypass', lamports: simulation.lamports });
+        // SAFE MODE: do NOT call simulateTransaction at all.
+        diagPush('simulate-skipped', 'ok', { reason: 'safe-mode' });
+        simulation = STATIC_SIM;
       } else {
         diagPush('simulate', 'start');
         toast.loading('Simulating transaction…', { id: 'tx-sim' });
-        simulation = await simulateTxCost(connection, transaction, publicKey.toBase58());
-        toast.dismiss('tx-sim');
-        dbg('3/9 simulation result:', {
-          ok: simulation.ok,
-          error: simulation.error,
-          lamports: simulation.lamports,
-          computeUnits: simulation.computeUnits,
-          logsCount: simulation.logs?.length,
-        });
-
-        if (!simulation.ok) {
-          const failingLine =
-            (simulation.logs || []).find((l) => /Error|failed|insufficient|invalid/i.test(l)) ||
-            (simulation.logs || []).slice(-1)[0];
-          const detail = failingLine ? `${simulation.error} — ${failingLine}` : simulation.error;
-          diagPush('simulate', 'fail', { error: simulation.error, lastLog: failingLine });
-          dbg('3/9 simulation FAIL details:', { error: simulation.error, logs: simulation.logs });
-          toast.error(`Simulation failed: ${detail}`);
-          return { success: false, error: detail, simulation };
+        let simResult = null;
+        let simThrew = null;
+        try {
+          simResult = await simulateTxCost(connection, transaction, publicKey.toBase58());
+        } catch (e) {
+          simThrew = e;
         }
-        diagPush('simulate', 'ok', {
-          lamports: simulation.lamports,
-          computeUnits: simulation.computeUnits,
-        });
+        toast.dismiss('tx-sim');
+
+        if (simThrew) {
+          // Network/RPC threw — treat as advisory failure, continue to signing.
+          diagPush('simulate-soft-failed', 'fail', {
+            errorName: simThrew?.name,
+            errorMessage: simThrew?.message,
+            note: 'Continuing — simulation is advisory only',
+          });
+          dbg('3/9 simulation HARD threw — falling back to static estimate', simThrew);
+          simulation = { ...STATIC_SIM, advisoryError: simThrew?.message || String(simThrew) };
+        } else if (!simResult.ok) {
+          // RPC returned a structured failure — STILL advisory, NOT blocking.
+          const failingLine =
+            (simResult.logs || []).find((l) => /Error|failed|insufficient|invalid/i.test(l)) ||
+            (simResult.logs || []).slice(-1)[0];
+          diagPush('simulate-soft-failed', 'fail', {
+            error: simResult.error,
+            lastLog: failingLine,
+            note: 'Continuing — simulation is advisory only',
+          });
+          dbg('3/9 simulation soft-failed:', { error: simResult.error, logs: simResult.logs });
+          simulation = {
+            ...STATIC_SIM,
+            advisoryError: failingLine ? `${simResult.error} — ${failingLine}` : simResult.error,
+          };
+        } else {
+          diagPush('simulate', 'ok', {
+            lamports: simResult.lamports,
+            computeUnits: simResult.computeUnits,
+          });
+          simulation = simResult;
+        }
       }
 
       // ── 4. Explicit user confirmation (REQUIRED) ──────────────────────

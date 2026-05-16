@@ -37,7 +37,9 @@ const SafetyConfirmModal = ({
   const { network, isMainnet, testMode } = useNetwork();
 
   const isSimError = simulation && !simulation.ok;
-  const canConfirm = !!simulation && simulation.ok && !loadingSimulation && !testMode;
+  const isSimSoft = simulation && simulation.ok && simulation.soft;
+  const canConfirm =
+    !!simulation && (simulation.ok) && !loadingSimulation && !testMode;
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onCancel(); }}>
@@ -97,9 +99,27 @@ const SafetyConfirmModal = ({
 
           {!loadingSimulation && simulation?.ok && (
             <>
-              <div className="flex items-center gap-2 text-sm text-green-700 font-semibold">
-                <CheckCircle size={16} weight="fill" /> Simulation succeeded
-              </div>
+              {isSimSoft ? (
+                <div className="flex items-start gap-2 text-sm text-yellow-800 bg-yellow-50 border border-yellow-300 p-3" data-testid="safety-sim-soft">
+                  <Warning size={16} weight="fill" className="text-yellow-700 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold mb-1">Simulation unavailable — showing static estimate</p>
+                    <p className="text-xs">
+                      On-chain simulation didn't run successfully, so the figures below are a rent-based estimate.
+                      The actual transaction will still go through your wallet for explicit signing.
+                    </p>
+                    {simulation.advisoryError && (
+                      <p className="text-[10px] font-mono mt-1 text-yellow-700 break-all">
+                        {String(simulation.advisoryError).slice(0, 240)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-sm text-green-700 font-semibold">
+                  <CheckCircle size={16} weight="fill" /> Simulation succeeded
+                </div>
+              )}
 
               <div className={`p-4 ${isMainnet ? 'bg-red-50 border border-red-300' : 'bg-zinc-50 border border-zinc-200'}`}>
                 <p className="text-xs uppercase tracking-wider text-zinc-500 mb-1">You are about to spend</p>

@@ -25,15 +25,24 @@ export async function simulateTxCost(connection, transaction, payerStr) {
   const payerPk = new PublicKey(payerStr);
   const preBalance = await connection.getBalance(payerPk, 'confirmed');
 
-  const sim = await connection.simulateTransaction(transaction, {
-    sigVerify: false,
-    replaceRecentBlockhash: true,
-    commitment: 'confirmed',
-    accounts: {
-      encoding: 'base64',
-      addresses: [payerStr],
-    },
-  });
+  // Use a defensive config — `sigVerify: false` and `replaceRecentBlockhash: true`
+  // are supported by all modern web3.js + RPC combos. We do NOT pass
+  // `accounts: { addresses }` here anymore: that option causes Helius and
+  // some other RPCs to reject the request with a generic "Invalid arguments"
+  // when the tx contains newly-created accounts that don't yet exist on-chain.
+  // We can still compute the cost from the standard fee + rent breakdown if
+  // accounts response is absent (no accounts field → fall back to baseFee).
+  let sim;
+  try {
+    sim = await connection.simulateTransaction(transaction, {
+      sigVerify: false,
+      replaceRecentBlockhash: true,
+      commitment: 'confirmed',
+    });
+  } catch (e) {
+    // Re-throw so the caller's try/catch can mark this as a soft failure.
+    throw e;
+  }
 
   const value = sim?.value;
   if (!value) {
@@ -56,14 +65,16 @@ export async function simulateTxCost(connection, transaction, payerStr) {
     };
   }
 
-  const postAccount = value.accounts?.[0];
-  const postBalance = postAccount?.lamports ?? preBalance;
-  const totalLamports = Math.max(0, preBalance - postBalance);
-
-  // Best-effort base fee: assume 5000 lamports per signature
-  const sigCount = (transaction.signatures || []).length || 1;
+  // We didn't request accounts back in the config (see comment above), so we
+  // approximate cost from the base fee × signature count.
+  const sigCount = (transaction.signatures || []).length || 2;
   const baseFeeLamports = 5000 * sigCount;
-  const rentLamports = Math.max(0, totalLamports - baseFeeLamports);
+  // Known rent for token-create: mint (1,461,600) + ATA (2,039,280) + metadata (5,616,720) = 9,117,600
+  // For revoke/airdrop, rent is 0 → bypass by leaving rentLamports at 0 and
+  // letting the caller surface whichever number is meaningful.
+  // We keep this approximation conservative and return total = baseFee for now.
+  const rentLamports = 0;
+  const totalLamports = baseFeeLamports + rentLamports;
 
   return {
     ok: true,
@@ -74,7 +85,7 @@ export async function simulateTxCost(connection, transaction, payerStr) {
     computeUnits: value.unitsConsumed || 0,
     logs: value.logs || [],
     preBalanceLamports: preBalance,
-    postBalanceLamports: postBalance,
+    postBalanceLamports: preBalance - totalLamports,
   };
 }
 

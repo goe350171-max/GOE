@@ -75,28 +75,48 @@ export function useAirdropOperations() {
     const built = await buildBatch({ mint, decimals, recipients: batches[0] });
     const txBuffer = Buffer.from(built.transaction, 'base64');
     const transaction = Transaction.from(txBuffer);
-    const sim = await simulateTxCost(connection, transaction, publicKey.toBase58());
 
+    // Advisory simulation — never blocks the airdrop. If it fails (Helius
+    // sometimes rejects simulation of unsigned account creation), fall back
+    // to a per-recipient rent estimate so the safety modal still shows
+    // a sensible cost figure.
+    let sim;
+    try {
+      sim = await simulateTxCost(connection, transaction, publicKey.toBase58());
+    } catch (e) {
+      sim = { ok: false, soft: true, error: e?.message || 'simulation threw', logs: [] };
+    }
+
+    const SAFE_PER_BATCH_LAMPORTS = 10_000 + 2_039_280; // base fee + 1 ATA rent
     if (!sim.ok) {
+      const totalLamports = SAFE_PER_BATCH_LAMPORTS * batches.length;
       return {
-        ok: false,
-        error: sim.error,
-        simulation: sim,
-        perBatchLamports: 0,
-        totalLamports: 0,
+        ok: true,
+        simulation: {
+          ok: true,
+          soft: true,
+          advisoryError: sim.error,
+          lamports: totalLamports,
+          sol: totalLamports / 1_000_000_000,
+          baseFeeLamports: 10_000 * batches.length,
+          rentLamports: 2_039_280 * batches.length,
+          computeUnits: 0,
+          logs: [],
+          preBalanceLamports: 0,
+          postBalanceLamports: 0,
+        },
+        perBatchLamports: SAFE_PER_BATCH_LAMPORTS,
+        totalLamports,
       };
     }
 
-    // Project: each batch ≈ same cost (recipient ATAs may already exist
-    // for later batches, so this is an upper bound — safe).
-    const perBatchLamports = sim.lamports;
+    const perBatchLamports = sim.lamports || SAFE_PER_BATCH_LAMPORTS;
     const totalLamports = perBatchLamports * batches.length;
 
     return {
       ok: true,
       simulation: {
         ...sim,
-        // override total to reflect ALL batches for the modal
         lamports: totalLamports,
         sol: totalLamports / 1_000_000_000,
       },
@@ -147,25 +167,26 @@ export function useAirdropOperations() {
             const txBuffer = Buffer.from(built.transaction, 'base64');
             const transaction = Transaction.from(txBuffer);
 
-            // Per-batch simulation (safety net: fail fast before signing)
+            // Per-batch advisory simulation. Failures do NOT block signing.
             onProgress({ batchIndex: i, totalBatches: batches.length, attempt, phase: 'simulating' });
-            const sim = await simulateTxCost(connection, transaction, publicKey.toBase58());
-            if (!sim.ok) {
-              result = { success: false, signature: null, error: `Simulation failed: ${sim.error}` };
-            } else {
-              onProgress({ batchIndex: i, totalBatches: batches.length, attempt, phase: 'signing' });
-              result = await signSendAndConfirm(connection, signTransaction, transaction, isMainnet);
-              if (result.success) {
-                recordSignedTransaction({
-                  action: TX_ACTIONS.AIRDROP_BATCH,
-                  mint,
-                  wallet: publicKey.toBase58(),
-                  signature: result.signature,
-                  lamports: sim.lamports,
-                  sol: sim.sol,
-                  details: { batchIndex: i, recipients: recipients.length },
-                });
-              }
+            let sim;
+            try {
+              sim = await simulateTxCost(connection, transaction, publicKey.toBase58());
+            } catch (e) {
+              sim = { ok: false, soft: true, error: e?.message || 'simulation threw' };
+            }
+            onProgress({ batchIndex: i, totalBatches: batches.length, attempt, phase: 'signing' });
+            result = await signSendAndConfirm(connection, signTransaction, transaction, isMainnet);
+            if (result.success) {
+              recordSignedTransaction({
+                action: TX_ACTIONS.AIRDROP_BATCH,
+                mint,
+                wallet: publicKey.toBase58(),
+                signature: result.signature,
+                lamports: sim.ok ? sim.lamports : 10_000 + 2_039_280,
+                sol: (sim.ok ? sim.lamports : (10_000 + 2_039_280)) / 1_000_000_000,
+                details: { batchIndex: i, recipients: recipients.length, simulationOk: !!sim.ok },
+              });
             }
           } catch (e) {
             result = { success: false, signature: null, error: extractErrorMessage(e) };
