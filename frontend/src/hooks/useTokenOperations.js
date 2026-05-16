@@ -47,7 +47,11 @@ export const useTokenOperations = () => {
       
       console.log('Response:', response.data);
 
-      const { transaction: txData, mintKeypair: mintKeypairData, mint } = response.data;
+      const { transaction: txData, mintKeypair: mintKeypairData, mint, ata, totalMinted } = response.data;
+      
+      console.log('Mint address:', mint);
+      console.log('ATA address:', ata);
+      console.log('Total minted (raw):', totalMinted);
       
       const txBuffer = Buffer.from(txData, 'base64');
       const transaction = Transaction.from(txBuffer);
@@ -69,14 +73,17 @@ export const useTokenOperations = () => {
       
       await connection.confirmTransaction(signature, 'confirmed');
       
+      console.log('Transaction confirmed:', signature);
+      console.log(`Explorer: https://explorer.solana.com/tx/${signature}`);
+      
       await axios.post(`${API}/tokens/update-signature`, null, {
         params: { mint, signature }
       });
       
       toast.dismiss();
-      toast.success('Token created successfully!');
+      toast.success('Token created and minted successfully!');
       
-      return { success: true, signature, mint };
+      return { success: true, signature, mint, ata };
     } catch (err) {
       toast.dismiss();
       console.error('Token creation error:', err);
