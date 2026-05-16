@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 2: Tested new airdrop endpoints, Pydantic validation, health, CORS, and airdrop frontend page. All 24 backend tests passed. Airdrop UI fully functional: token picker tabs (launchpad/manual), recipients tabs (paste/csv), on-chain mint info panel populates for USDC (decimals=6, supply=8.59B), validation surfaces per-line errors (Invalid wallet address, Invalid amount, Duplicate address), dry-run summary (Total tokens / Recipients / Batches / Fee), preview button correctly disabled until wallet connects.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Explorer",
+        "issues": ["One console error 'ERR_UNKNOWN_URL_SCHEME' — likely from rendering ipfs:// image URIs directly in <img src>. Should be rewritten to gateway URL (gateway.pinata.cloud/ipfs/<cid>) for browser rendering."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_airdrop.py",
+    "/app/backend/tests/test_api.py",
+    "/app/test_reports/pytest/airdrop_results.xml"
+  ],
+  "action_items": [
+    "Optional: Convert ipfs:// image URIs to https gateway in Explorer/Launchpad <img> tags to avoid ERR_UNKNOWN_URL_SCHEME console errors.",
+    "Optional: SuccessModal share/import/copy testids (share-on-x-btn, copy-share-text-btn, import-token-btn, copy-mint-btn) were not asserted because a real token creation requires a wallet signature (cannot be triggered in headless). Main agent may self-verify via manual flow."
+  ],
+  "critical_code_review_comments": [
+    "AirdropBatchRequest enforces max_length=15 recipients via Pydantic — confirmed returns 422 in test.",
+    "TokenMetadata validators (name 1-64, symbol 1-12, decimals 0-9, supply 1..10^15) all enforced — confirmed via 422 responses.",
+    "/api/airdrop/build-batch correctly rejects duplicate recipients with 400 and message containing 'duplicate'.",
+    "Built transaction size for 3 recipients (6 instructions) is well under 1232-byte cap.",
+    "CORS header `access-control-allow-origin` reflected correctly. Note: when `CORS_ORIGINS='*'` and `allow_credentials=True`, Starlette returns the request Origin (not '*'); test verified header presence which is sufficient. Recommend tightening CORS_ORIGINS in prod env (warning logged at startup).",
+    "server.py is ~1213 lines — consider splitting into routers/airdrop.py, routers/tokens.py, services/solana.py for maintainability.",
+    "derive_ata() has a confusing for-loop that always returns on first iteration via Pubkey.find_program_address — the loop body is dead code. Cleanup recommended (not a bug, just maintenance)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_airdrop.py"
+  ],
+  "success_rate": {
+    "backend": "100% (24/24 tests passed)",
+    "frontend": "100% of reachable UI assertions (wallet-gated actions skipped as expected)"
+  },
+  "test_credentials": "None required (no auth in app).",
+  "seed_data_creation": "None — read-only on-chain RPC + Pydantic validation tests. Test_api.py from iteration 1 creates TEST_ prefixed tokens but was not re-run this iteration.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend has 2 test files now: /app/backend/tests/test_api.py (iteration 1 - core token CRUD/IPFS) and /app/backend/tests/test_airdrop.py (iteration 2 - airdrop + Pydantic + health + CORS). Both load REACT_APP_BACKEND_URL from /app/frontend/.env via helper. Airdrop frontend data-testids: airdrop-page, airdrop-token-section, tab-launchpad, tab-manual-mint, launchpad-token-select, manual-mint-input, airdrop-recipients-section, tab-paste, tab-csv, recipients-textarea, airdrop-preview-btn. Mainnet USDC EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v works as a reliable mint-info fixture. SuccessModal share/import buttons were not verified end-to-end (requires real wallet signed tx).",
+  "rca of the issue": "No issues identified in this iteration. All 24 new backend tests passed on first run after fixing BASE_URL loading (the original /app/backend/tests pattern relied on REACT_APP_BACKEND_URL being set as env var; I added a fallback that reads /app/frontend/.env). The minor explorer console warning (ERR_UNKNOWN_URL_SCHEME) is a benign side-effect of ipfs:// image URIs not being natively rendered by the browser — does not break the page."
+}

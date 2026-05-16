@@ -158,17 +158,48 @@ async def pin_json_to_ipfs(metadata: dict, token_name: str) -> str:
             logger.info(f"  Metadata pinned: ipfs://{ipfs_hash}")
             return f"ipfs://{ipfs_hash}"
 
+def _validate_pubkey(value: str, field_name: str = "address") -> str:
+    """Validate a Solana base58 pubkey. Raises ValueError on failure."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    try:
+        Pubkey.from_string(value.strip())
+    except Exception as e:
+        raise ValueError(f"Invalid Solana address for {field_name}: {e}")
+    return value.strip()
+
+
+def _sanitize_str(value: Optional[str], max_len: int) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("Must be a string")
+    cleaned = value.strip()
+    if len(cleaned) > max_len:
+        raise ValueError(f"Field exceeds max length {max_len}")
+    # Strip null bytes and control chars (except common whitespace)
+    cleaned = ''.join(ch for ch in cleaned if ch == '\n' or ch == '\t' or ord(ch) >= 32)
+    return cleaned
+
+
 class TokenMetadata(BaseModel):
-    name: str
-    symbol: str
-    decimals: int = 9
-    total_supply: int
-    description: Optional[str] = None
-    image: Optional[str] = None
-    logo: Optional[str] = None
-    twitter: Optional[str] = None
-    telegram: Optional[str] = None
-    website: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=64)
+    symbol: str = Field(..., min_length=1, max_length=12)
+    decimals: int = Field(9, ge=0, le=9)
+    total_supply: int = Field(..., gt=0, le=10**15)
+    description: Optional[str] = Field(None, max_length=2000)
+    image: Optional[str] = Field(None, max_length=2048)
+    logo: Optional[str] = Field(None, max_length=2048)
+    twitter: Optional[str] = Field(None, max_length=256)
+    telegram: Optional[str] = Field(None, max_length=256)
+    website: Optional[str] = Field(None, max_length=512)
+
+    @field_validator('name', 'symbol', 'description', 'twitter', 'telegram')
+    @classmethod
+    def _strip_control(cls, v):
+        if v is None:
+            return v
+        return _sanitize_str(v, 4096) or v
 
 class TokenCreationRequest(BaseModel):
     payer: str
@@ -177,15 +208,48 @@ class TokenCreationRequest(BaseModel):
     revoke_freeze_authority: bool = False
     revoke_update_authority: bool = False
 
+    @field_validator('payer')
+    @classmethod
+    def _v_payer(cls, v):
+        return _validate_pubkey(v, "payer")
+
 class AuthorityRevocationRequest(BaseModel):
     mint: str
     authority_type: str
     payer: str
 
-class AirdropRequest(BaseModel):
+    @field_validator('mint', 'payer')
+    @classmethod
+    def _v_pk(cls, v):
+        return _validate_pubkey(v, "address")
+
+    @field_validator('authority_type')
+    @classmethod
+    def _v_at(cls, v):
+        allowed = {"mint", "freeze", "owner", "close"}
+        if v not in allowed:
+            raise ValueError(f"authority_type must be one of {sorted(allowed)}")
+        return v
+
+class AirdropRecipient(BaseModel):
+    address: str = Field(..., max_length=64)
+    amount: float = Field(..., gt=0)
+
+    @field_validator('address')
+    @classmethod
+    def _v_addr(cls, v):
+        return _validate_pubkey(v, "recipient address")
+
+class AirdropBatchRequest(BaseModel):
     mint: str
     payer: str
-    recipients: List[dict]
+    recipients: List[AirdropRecipient] = Field(..., min_length=1, max_length=15)
+    decimals: int = Field(..., ge=0, le=9)
+
+    @field_validator('mint', 'payer')
+    @classmethod
+    def _v_pk(cls, v):
+        return _validate_pubkey(v, "address")
 
 class TokenRecord(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -400,6 +464,47 @@ def build_set_authority_ix(account: Pubkey, current_authority: Pubkey, authority
             AccountMeta(pubkey=current_authority, is_signer=True, is_writable=False),
         ],
         data=data
+    )
+
+
+def build_create_ata_idempotent_ix(payer: Pubkey, ata: Pubkey, owner: Pubkey, mint: Pubkey) -> Instruction:
+    """Build CreateAssociatedTokenAccountIdempotent (data = [1]).
+    Will succeed silently if the ATA already exists."""
+    return Instruction(
+        program_id=ASSOCIATED_TOKEN_PROGRAM_ID,
+        accounts=[
+            AccountMeta(pubkey=payer, is_signer=True, is_writable=True),
+            AccountMeta(pubkey=ata, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=owner, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=SYSTEM_PROGRAM_ID, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
+        ],
+        data=bytes([1]),
+    )
+
+
+def build_transfer_checked_ix(
+    source_ata: Pubkey,
+    mint: Pubkey,
+    dest_ata: Pubkey,
+    owner: Pubkey,
+    amount: int,
+    decimals: int,
+) -> Instruction:
+    """Build SPL Token TransferChecked instruction (opcode 12).
+    Layout: u8(12) + u64 LE amount + u8 decimals.
+    Verifies mint + decimals on-chain (safer than basic Transfer)."""
+    data = bytes([12]) + amount.to_bytes(8, 'little') + bytes([decimals])
+    return Instruction(
+        program_id=TOKEN_PROGRAM_ID,
+        accounts=[
+            AccountMeta(pubkey=source_ata, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=dest_ata, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=owner, is_signer=True, is_writable=False),
+        ],
+        data=data,
     )
 
 
@@ -894,15 +999,214 @@ async def revoke_authority(request: Request, payload: AuthorityRevocationRequest
         logger.error(f"Error revoking authority: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
+async def rpc_get_parsed_account(account: str):
+    """Call getAccountInfo with jsonParsed encoding using failover."""
+    last_error = None
+    for rpc_url in SOLANA_RPC_FALLBACKS:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    rpc_url,
+                    json={
+                        "jsonrpc": "2.0", "id": 1,
+                        "method": "getAccountInfo",
+                        "params": [account, {"encoding": "jsonParsed", "commitment": "confirmed"}],
+                    },
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status != 200:
+                        last_error = f"HTTP {resp.status}"
+                        continue
+                    data = await resp.json()
+                    if 'error' in data:
+                        last_error = data['error']
+                        continue
+                    return data.get('result', {}).get('value')
+        except Exception as e:
+            last_error = str(e)
+            continue
+    raise HTTPException(status_code=503, detail=f"RPC unavailable: {last_error}")
+
+
+@api_router.get("/airdrop/mint-info/{mint}")
+@limiter.limit("30/minute")
+async def airdrop_mint_info(request: Request, mint: str):
+    """Fetch on-chain decimals + supply + freeze state for any SPL mint.
+    Used by airdrop UI for arbitrary mints (not just launchpad ones)."""
+    try:
+        _validate_pubkey(mint, "mint")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    value = await rpc_get_parsed_account(mint)
+    if not value:
+        raise HTTPException(status_code=404, detail="Mint account not found on-chain")
+    parsed = value.get('data', {}).get('parsed', {})
+    if parsed.get('type') != 'mint':
+        raise HTTPException(status_code=400, detail="Account is not an SPL mint")
+    info = parsed.get('info', {})
+    return {
+        "mint": mint,
+        "decimals": info.get('decimals', 0),
+        "supply": info.get('supply', "0"),
+        "mintAuthority": info.get('mintAuthority'),
+        "freezeAuthority": info.get('freezeAuthority'),
+        "isInitialized": info.get('isInitialized', False),
+    }
+
+
+@api_router.get("/airdrop/balance")
+@limiter.limit("30/minute")
+async def airdrop_balance(request: Request, mint: str, owner: str):
+    """Fetch token balance for a given (mint, owner) — derives the owner's ATA."""
+    try:
+        _validate_pubkey(mint, "mint")
+        _validate_pubkey(owner, "owner")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    mint_pk = Pubkey.from_string(mint)
+    owner_pk = Pubkey.from_string(owner)
+    ata = Pubkey.find_program_address(
+        [bytes(owner_pk), bytes(TOKEN_PROGRAM_ID), bytes(mint_pk)],
+        ASSOCIATED_TOKEN_PROGRAM_ID,
+    )[0]
+    value = await rpc_get_parsed_account(str(ata))
+    if not value:
+        return {"ata": str(ata), "exists": False, "balance": "0", "uiAmount": 0, "decimals": None}
+    info = value.get('data', {}).get('parsed', {}).get('info', {})
+    token_amount = info.get('tokenAmount', {}) or {}
+    return {
+        "ata": str(ata),
+        "exists": True,
+        "balance": token_amount.get('amount', "0"),
+        "uiAmount": token_amount.get('uiAmount', 0),
+        "decimals": token_amount.get('decimals'),
+    }
+
+
+@api_router.post("/airdrop/build-batch")
+@limiter.limit("30/minute")
+async def airdrop_build_batch(request: Request, payload: AirdropBatchRequest):
+    """Build an unsigned transaction for one airdrop batch.
+    Per recipient: CreateATAIdempotent + TransferChecked.
+    Frontend signs with Phantom (no private keys ever leave the user's wallet)."""
+    try:
+        payer_pk = Pubkey.from_string(payload.payer)
+        mint_pk = Pubkey.from_string(payload.mint)
+
+        # Derive payer's source ATA
+        source_ata = Pubkey.find_program_address(
+            [bytes(payer_pk), bytes(TOKEN_PROGRAM_ID), bytes(mint_pk)],
+            ASSOCIATED_TOKEN_PROGRAM_ID,
+        )[0]
+
+        # Reject duplicate recipient addresses inside one batch
+        seen = set()
+        instructions = []
+        recipient_atas = []
+        for r in payload.recipients:
+            if r.address in seen:
+                raise HTTPException(status_code=400, detail=f"Duplicate recipient in batch: {r.address}")
+            seen.add(r.address)
+
+            recipient_pk = Pubkey.from_string(r.address)
+            recipient_ata = Pubkey.find_program_address(
+                [bytes(recipient_pk), bytes(TOKEN_PROGRAM_ID), bytes(mint_pk)],
+                ASSOCIATED_TOKEN_PROGRAM_ID,
+            )[0]
+
+            # Convert UI amount -> raw u64 with decimal precision
+            raw_amount = int(round(r.amount * (10 ** payload.decimals)))
+            if raw_amount <= 0:
+                raise HTTPException(status_code=400, detail=f"Amount too small for {r.address}")
+            if raw_amount >= 2**64:
+                raise HTTPException(status_code=400, detail=f"Amount overflow for {r.address}")
+
+            instructions.append(
+                build_create_ata_idempotent_ix(payer_pk, recipient_ata, recipient_pk, mint_pk)
+            )
+            instructions.append(
+                build_transfer_checked_ix(
+                    source_ata=source_ata,
+                    mint=mint_pk,
+                    dest_ata=recipient_ata,
+                    owner=payer_pk,
+                    amount=raw_amount,
+                    decimals=payload.decimals,
+                )
+            )
+            recipient_atas.append({"address": r.address, "ata": str(recipient_ata), "amount": str(raw_amount)})
+
+        recent_blockhash = await get_latest_blockhash()
+        msg = Message.new_with_blockhash(instructions, payer_pk, recent_blockhash)
+        tx = SoldersTransaction.new_unsigned(msg)
+        tx_bytes = bytes(tx)
+
+        # Enforce 1232-byte hard cap of Solana wire format
+        if len(tx_bytes) > 1232:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Batch too large ({len(tx_bytes)} bytes). Reduce recipients per batch.",
+            )
+
+        return {
+            "transaction": base64.b64encode(tx_bytes).decode('utf-8'),
+            "sourceAta": str(source_ata),
+            "recipients": recipient_atas,
+            "instructionCount": len(instructions),
+            "sizeBytes": len(tx_bytes),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"airdrop/build-batch failed: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@api_router.get("/health")
+async def health_check():
+    """Liveness + dependency health for production monitoring."""
+    health = {
+        "status": "ok",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "service": "solana-token-launchpad",
+        "checks": {},
+    }
+    # MongoDB
+    try:
+        await db.command("ping")
+        health["checks"]["mongo"] = "ok"
+    except Exception as e:
+        health["checks"]["mongo"] = f"fail: {e}"
+        health["status"] = "degraded"
+    # RPC
+    try:
+        await get_latest_blockhash()
+        health["checks"]["solana_rpc"] = "ok"
+    except Exception as e:
+        health["checks"]["solana_rpc"] = f"fail: {e}"
+        health["status"] = "degraded"
+    # IPFS
+    health["checks"]["pinata"] = "configured" if PINATA_JWT else "missing"
+    return health
+
+
 app.include_router(api_router)
 
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[o.strip() for o in os.environ.get('CORS_ORIGINS', '*').split(',') if o.strip()],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
+    max_age=3600,
 )
+
+if os.environ.get('CORS_ORIGINS', '*').strip() == '*':
+    logger.warning("CORS_ORIGINS is wildcard (*). Set explicit origins in production.")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

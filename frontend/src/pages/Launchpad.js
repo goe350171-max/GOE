@@ -175,6 +175,8 @@ const TokenCreationForm = () => {
         verified: result.verified,
         imageUri: finalImageUri,
         explorerUrl: result.explorerUrl,
+        name: formData.name,
+        symbol: formData.symbol,
       });
 
       setFormData({
