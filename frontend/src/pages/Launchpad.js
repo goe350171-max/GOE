@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useTokenOperations } from '../hooks/useTokenOperations';
 import { Label } from '../components/ui/label';
@@ -6,11 +6,17 @@ import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
 import { Button } from '../components/ui/button';
 import { Switch } from '../components/ui/switch';
-import { Coins, Image as ImageIcon, Globe, TwitterLogo, TelegramLogo, Check, X } from '@phosphor-icons/react';
+import { Coins, Image as ImageIcon, Globe, TwitterLogo, TelegramLogo, Check, X, UploadSimple, Trash } from '@phosphor-icons/react';
+import axios from 'axios';
+import { toast } from 'sonner';
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API = `${BACKEND_URL}/api`;
 
 const TokenCreationForm = () => {
   const { connected } = useWallet();
   const { createToken, loading } = useTokenOperations();
+  const fileInputRef = useRef(null);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -25,17 +31,106 @@ const TokenCreationForm = () => {
     website: ''
   });
 
+  // Image upload state
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [imageIpfsUri, setImageIpfsUri] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+
   const [authorities, setAuthorities] = useState({
     revokeMint: false,
     revokeFreeze: false,
     revokeUpdate: false
   });
 
+  const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'];
+  const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+
+  const validateFile = (file) => {
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      toast.error('Invalid file type. Use PNG, JPEG, GIF, WEBP, or SVG.');
+      return false;
+    }
+    if (file.size > MAX_SIZE) {
+      toast.error(`File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max: 5MB.`);
+      return false;
+    }
+    return true;
+  };
+
+  const handleFile = (file) => {
+    if (!validateFile(file)) return;
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+    setImageIpfsUri(''); // Clear any previous IPFS URI
+  };
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    setDragActive(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) handleFile(file);
+  }, []);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    setDragActive(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    setDragActive(false);
+  }, []);
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (file) handleFile(file);
+  };
+
+  const uploadImage = async () => {
+    if (!imageFile) return null;
+
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', imageFile);
+
+      const res = await axios.post(`${API}/upload-image`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      const { ipfsUri, gatewayUrl } = res.data;
+      setImageIpfsUri(ipfsUri);
+      toast.success('Image uploaded to IPFS!');
+      return ipfsUri;
+    } catch (err) {
+      const msg = err?.response?.data?.detail || err.message;
+      toast.error(`Image upload failed: ${msg}`);
+      return null;
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removeImage = () => {
+    setImageFile(null);
+    setImagePreview(null);
+    setImageIpfsUri('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!connected) {
-      return;
+    if (!connected) return;
+
+    // Upload image to IPFS first if a file was selected
+    let finalImageUri = imageIpfsUri || formData.image || '';
+    if (imageFile && !imageIpfsUri) {
+      const uploaded = await uploadImage();
+      if (!uploaded) return; // Upload failed, don't proceed
+      finalImageUri = uploaded;
     }
 
     const result = await createToken({
@@ -45,8 +140,8 @@ const TokenCreationForm = () => {
         decimals: parseInt(formData.decimals),
         total_supply: parseInt(formData.totalSupply),
         description: formData.description,
-        image: formData.image,
-        logo: formData.logo,
+        image: finalImageUri,
+        logo: finalImageUri,
         twitter: formData.twitter,
         telegram: formData.telegram,
         website: formData.website
@@ -58,22 +153,12 @@ const TokenCreationForm = () => {
 
     if (result?.success) {
       setFormData({
-        name: '',
-        symbol: '',
-        decimals: 9,
-        totalSupply: '',
-        description: '',
-        image: '',
-        logo: '',
-        twitter: '',
-        telegram: '',
-        website: ''
+        name: '', symbol: '', decimals: 9, totalSupply: '',
+        description: '', image: '', logo: '',
+        twitter: '', telegram: '', website: ''
       });
-      setAuthorities({
-        revokeMint: false,
-        revokeFreeze: false,
-        revokeUpdate: false
-      });
+      setAuthorities({ revokeMint: false, revokeFreeze: false, revokeUpdate: false });
+      removeImage();
     }
   };
 
@@ -186,34 +271,93 @@ const TokenCreationForm = () => {
             </div>
             
             <div className="space-y-6">
+              {/* Drag-and-drop image upload */}
               <div>
-                <Label htmlFor="image" className="text-xs uppercase tracking-wider font-semibold text-zinc-500 mb-2 block">
-                  Image URL
+                <Label className="text-xs uppercase tracking-wider font-semibold text-zinc-500 mb-2 block">
+                  Token Image *
                 </Label>
-                <Input
-                  id="image"
-                  data-testid="token-image-input"
-                  value={formData.image}
-                  onChange={(e) => setFormData({ ...formData, image: e.target.value })}
-                  placeholder="https://example.com/image.png"
-                  type="url"
-                  className="rounded-none border-zinc-300 focus:border-black focus:ring-1 focus:ring-black"
-                />
-              </div>
 
-              <div>
-                <Label htmlFor="logo" className="text-xs uppercase tracking-wider font-semibold text-zinc-500 mb-2 block">
-                  Logo URL
-                </Label>
-                <Input
-                  id="logo"
-                  data-testid="token-logo-input"
-                  value={formData.logo}
-                  onChange={(e) => setFormData({ ...formData, logo: e.target.value })}
-                  placeholder="https://example.com/logo.png"
-                  type="url"
-                  className="rounded-none border-zinc-300 focus:border-black focus:ring-1 focus:ring-black"
+                {imagePreview ? (
+                  <div className="relative border border-zinc-300 bg-zinc-50 p-4">
+                    <div className="flex items-start gap-6">
+                      <img
+                        src={imagePreview}
+                        alt="Token preview"
+                        data-testid="image-preview"
+                        className="w-32 h-32 object-cover border border-zinc-300"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-sm truncate">{imageFile?.name}</p>
+                        <p className="text-xs text-zinc-500 mt-1">
+                          {imageFile ? `${(imageFile.size / 1024).toFixed(1)} KB` : ''}
+                        </p>
+                        {imageIpfsUri ? (
+                          <div className="mt-2 flex items-center gap-2 text-xs">
+                            <Check size={14} weight="bold" className="text-green-600" />
+                            <span className="text-green-700 font-medium">Pinned to IPFS</span>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-zinc-500 mt-2">
+                            Will be uploaded to IPFS when you create the token
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={removeImage}
+                        data-testid="remove-image-btn"
+                        className="p-2 hover:bg-zinc-200 transition-colors"
+                      >
+                        <Trash size={18} weight="bold" className="text-zinc-600" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    data-testid="image-dropzone"
+                    onClick={() => fileInputRef.current?.click()}
+                    onDrop={handleDrop}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    className={`border-2 border-dashed p-8 text-center cursor-pointer transition-all duration-200 ${
+                      dragActive
+                        ? 'border-black bg-zinc-100'
+                        : 'border-zinc-300 hover:border-zinc-500 hover:bg-zinc-50'
+                    }`}
+                  >
+                    <UploadSimple size={36} weight="bold" className="mx-auto text-zinc-400 mb-3" />
+                    <p className="text-sm font-semibold text-zinc-700">
+                      Drop image here or click to browse
+                    </p>
+                    <p className="text-xs text-zinc-500 mt-1">
+                      PNG, JPEG, GIF, WEBP, SVG — Max 5MB
+                    </p>
+                  </div>
+                )}
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                  data-testid="image-file-input"
                 />
+
+                {/* Fallback: URL input */}
+                {!imageFile && (
+                  <div className="mt-3">
+                    <p className="text-xs text-zinc-400 mb-1">Or paste an image URL:</p>
+                    <Input
+                      data-testid="token-image-url-input"
+                      value={formData.image}
+                      onChange={(e) => setFormData({ ...formData, image: e.target.value })}
+                      placeholder="https://example.com/image.png"
+                      type="url"
+                      className="rounded-none border-zinc-300 focus:border-black focus:ring-1 focus:ring-black text-sm"
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -330,10 +474,10 @@ const TokenCreationForm = () => {
             <Button
               type="submit"
               data-testid="create-token-submit"
-              disabled={!connected || loading}
+              disabled={!connected || loading || uploading}
               className="w-full mt-8 bg-black text-white hover:bg-zinc-800 rounded-none h-12 font-bold tracking-wide transition-all duration-200 hover:shadow-[4px_4px_0px_0px_rgba(9,9,11,1)] hover:-translate-y-1"
             >
-              {loading ? 'Creating...' : connected ? 'Create Token' : 'Connect Wallet'}
+              {uploading ? 'Uploading image...' : loading ? 'Creating...' : connected ? 'Create Token' : 'Connect Wallet'}
             </Button>
 
             {!connected && (

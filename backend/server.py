@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -237,6 +237,71 @@ async def get_latest_blockhash():
 @api_router.get("/")
 async def root():
     return {"message": "Solana Token Launchpad API"}
+
+
+ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"}
+MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
+
+
+@api_router.post("/upload-image")
+async def upload_image(file: UploadFile = File(...)):
+    """Upload an image file directly to Pinata IPFS. Returns the IPFS URI."""
+    if not PINATA_JWT:
+        raise HTTPException(status_code=503, detail="Pinata IPFS not configured")
+
+    # Validate content type
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type '{file.content_type}'. Allowed: PNG, JPEG, GIF, WEBP, SVG"
+        )
+
+    # Read and validate size
+    contents = await file.read()
+    if len(contents) > MAX_IMAGE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large ({len(contents) // 1024}KB). Maximum: {MAX_IMAGE_SIZE // 1024 // 1024}MB"
+        )
+
+    if len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    # Pin to IPFS via Pinata
+    filename = file.filename or "token_image.png"
+
+    async with aiohttp.ClientSession() as session:
+        form = aiohttp.FormData()
+        form.add_field('file', contents, filename=filename, content_type=file.content_type)
+        form.add_field('pinataMetadata', f'{{"name":"{filename}"}}')
+        form.add_field('pinataOptions', '{"cidVersion":1}')
+
+        async with session.post(
+            f"{PINATA_API_URL}/pinning/pinFileToIPFS",
+            headers={"Authorization": f"Bearer {PINATA_JWT}"},
+            data=form,
+            timeout=aiohttp.ClientTimeout(total=60)
+        ) as resp:
+            if resp.status != 200:
+                err_text = await resp.text()
+                logger.error(f"Pinata upload error: {err_text}")
+                raise HTTPException(status_code=503, detail="IPFS upload failed")
+            data = await resp.json()
+
+    ipfs_hash = data['IpfsHash']
+    ipfs_uri = f"ipfs://{ipfs_hash}"
+    gateway_url = f"{PINATA_GATEWAY}/{ipfs_hash}"
+
+    logger.info(f"Image uploaded: {filename} -> {ipfs_uri} ({len(contents)} bytes)")
+
+    return {
+        "ipfsUri": ipfs_uri,
+        "gatewayUrl": gateway_url,
+        "ipfsHash": ipfs_hash,
+        "fileName": filename,
+        "fileSize": len(contents),
+        "contentType": file.content_type,
+    }
 
 def derive_ata(owner: Pubkey, mint: Pubkey) -> Pubkey:
     """Derive the Associated Token Account address for a given owner and mint."""
