@@ -45,6 +45,7 @@ export const NetworkProvider = ({ children }) => {
     return stored === 'mainnet' ? 'mainnet' : 'devnet';
   });
   const [testMode, setTestModeState] = useState(() => readStorage(STORAGE_KEYS.testMode, '0') === '1');
+  const [safeMode, setSafeModeState] = useState(() => readStorage('solaunch.safeMode', '0') === '1');
   const [txLog, setTxLog] = useState(() => {
     try {
       const raw = readStorage(STORAGE_KEYS.txLog, '[]');
@@ -62,6 +63,10 @@ export const NetworkProvider = ({ children }) => {
     writeStorage(STORAGE_KEYS.testMode, testMode ? '1' : '0');
   }, [testMode]);
 
+  useEffect(() => {
+    writeStorage('solaunch.safeMode', safeMode ? '1' : '0');
+  }, [safeMode]);
+
   /** Set network — caller should show a warning modal first when switching to mainnet. */
   const setNetwork = useCallback((next) => {
     if (next !== 'devnet' && next !== 'mainnet') return;
@@ -70,6 +75,10 @@ export const NetworkProvider = ({ children }) => {
 
   const setTestMode = useCallback((next) => {
     setTestModeState(!!next);
+  }, []);
+
+  const setSafeMode = useCallback((next) => {
+    setSafeModeState(!!next);
   }, []);
 
   /** Append a signed-tx audit record (kept in localStorage). */
@@ -102,6 +111,8 @@ export const NetworkProvider = ({ children }) => {
     isDevnet: network === 'devnet',
     testMode,
     setTestMode,
+    safeMode,
+    setSafeMode,
     txLog,
     recordSignedTransaction,
     clearTxLog,

@@ -12,7 +12,7 @@ import { Warning, Flask, ShieldCheck } from '@phosphor-icons/react';
  * Switching DEVNET → MAINNET requires explicit confirmation in a warning modal.
  */
 const NetworkSwitcher = () => {
-  const { network, setNetwork, isMainnet, testMode, setTestMode } = useNetwork();
+  const { network, setNetwork, isMainnet, testMode, setTestMode, safeMode, setSafeMode } = useNetwork();
   const [showMainnetWarning, setShowMainnetWarning] = useState(false);
 
   const handleToggle = () => {
@@ -60,6 +60,21 @@ const NetworkSwitcher = () => {
       >
         <Flask size={12} weight="bold" />
         <span>Test {testMode ? 'ON' : 'OFF'}</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={() => setSafeMode(!safeMode)}
+        data-testid="safe-mode-toggle-btn"
+        title={safeMode ? 'Safe Mode is ON — minimal signing path, all wrappers off' : 'Enable Safe Mode (skip simulation/inspection, use simplest known-working tx flow)'}
+        className={`hidden lg:flex items-center gap-1.5 px-2 py-1.5 border text-xs font-semibold uppercase tracking-wider transition-colors ${
+          safeMode
+            ? 'bg-blue-500 text-white border-blue-600'
+            : 'bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-100'
+        }`}
+      >
+        <ShieldCheck size={12} weight="bold" />
+        <span>Safe {safeMode ? 'ON' : 'OFF'}</span>
       </button>
 
       {/* Mainnet activation confirmation */}
