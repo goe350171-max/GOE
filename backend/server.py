@@ -1,4 +1,5 @@
 from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File, Request
+from fastapi.exceptions import RequestValidationError
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -9,7 +10,7 @@ from starlette.responses import JSONResponse
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from typing import List, Optional
 import uuid
 from datetime import datetime, timezone
@@ -43,6 +44,40 @@ app = FastAPI()
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(status_code=429, content={"detail": "Too many requests. Please wait before trying again."})
+
+
+def _format_validation_errors(exc: RequestValidationError) -> dict:
+    """Convert Pydantic validation errors into a flat, user-friendly response.
+
+    Returns:
+      detail        : human-readable summary (string) — works directly with frontend toasts
+      field_errors  : structured array of { field, message, type } for programmatic UIs
+    """
+    field_errors = []
+    pretty = []
+    for err in exc.errors():
+        # Drop the leading "body" / "query" / "path" prefix and join dotted path
+        loc_parts = [str(p) for p in err.get("loc", []) if p not in ("body", "query", "path")]
+        field = ".".join(loc_parts) if loc_parts else "(request)"
+        msg = err.get("msg", "Invalid value")
+        # Pydantic v2 prepends "Value error, " to user-raised ValueError messages
+        if msg.startswith("Value error, "):
+            msg = msg[len("Value error, "):]
+        field_errors.append({"field": field, "message": msg, "type": err.get("type", "value_error")})
+        pretty.append(f"{field}: {msg}")
+    return {
+        "detail": " | ".join(pretty) if pretty else "Validation failed",
+        "field_errors": field_errors,
+    }
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    """Replace FastAPI's default 422 array-of-dicts response with a clean,
+    field-named string so frontends can show meaningful errors directly."""
+    body = _format_validation_errors(exc)
+    logger.warning("Validation error on %s: %s", request.url.path, body["detail"])
+    return JSONResponse(status_code=400, content=body)
 
 app.state.limiter = limiter
 api_router = APIRouter(prefix="/api")
@@ -185,8 +220,15 @@ def _sanitize_str(value: Optional[str], max_len: int) -> Optional[str]:
 class TokenMetadata(BaseModel):
     name: str = Field(..., min_length=1, max_length=64)
     symbol: str = Field(..., min_length=1, max_length=12)
-    decimals: int = Field(9, ge=0, le=9)
-    total_supply: int = Field(..., gt=0, le=10**15)
+    # SPL Token program accepts u8 decimals; cap at 18 (common upper bound for
+    # tokens — Ethereum-style 18 included). Token program technically allows 0-255
+    # but anything above 18 is impractical.
+    decimals: int = Field(9, ge=0, le=18)
+    # Human-readable supply. Pydantic guards a sane upper bound; the real
+    # safety check is the u64 overflow validator below which inspects
+    # total_supply × 10^decimals against Solana's u64 amount limit.
+    # Allow up to 10^18 human units (covers every realistic SPL supply).
+    total_supply: int = Field(..., gt=0, le=10**18)
     description: Optional[str] = Field(None, max_length=2000)
     image: Optional[str] = Field(None, max_length=2048)
     logo: Optional[str] = Field(None, max_length=2048)
@@ -200,6 +242,24 @@ class TokenMetadata(BaseModel):
         if v is None:
             return v
         return _sanitize_str(v, 4096) or v
+
+    @model_validator(mode='after')
+    def _check_u64_supply_overflow(self):
+        """Solana SPL amounts are u64. The mint instruction multiplies
+        human supply by 10^decimals. Reject combinations that would overflow,
+        with a clear, actionable message specifying both fields."""
+        U64_MAX = (1 << 64) - 1
+        raw = self.total_supply * (10 ** self.decimals)
+        if raw > U64_MAX:
+            # Compute max safe supply for the chosen decimals so the user
+            # knows exactly what to change.
+            max_supply_at_dec = U64_MAX // (10 ** self.decimals)
+            raise ValueError(
+                f"total_supply × 10^decimals = {raw} exceeds Solana u64 max ({U64_MAX}). "
+                f"With decimals={self.decimals}, max total_supply is {max_supply_at_dec:,}. "
+                f"Reduce total_supply or lower decimals."
+            )
+        return self
 
 class TokenCreationRequest(BaseModel):
     payer: str

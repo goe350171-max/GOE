@@ -5,6 +5,7 @@ import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
 import { useNetwork } from '../contexts/NetworkContext';
 import { simulateTxCost, TX_ACTIONS } from '../utils/txSafety';
+import { extractErrorMessage } from '../utils/errors';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -220,7 +221,7 @@ export const useTokenOperations = () => {
       toast.dismiss('tx-send'); toast.dismiss('tx-confirm'); toast.dismiss('tx-verify');
       // eslint-disable-next-line no-console
       console.error('Token creation error:', err);
-      const errorMessage = err?.response?.data?.detail || err.message || 'Unknown error';
+      const errorMessage = extractErrorMessage(err);
       setError(errorMessage);
       toast.error(`Failed: ${errorMessage}`);
       return { success: false, error: errorMessage };
@@ -295,7 +296,7 @@ export const useTokenOperations = () => {
       return { success: true, signature };
     } catch (err) {
       toast.dismiss('rev-build'); toast.dismiss('rev-sim'); toast.dismiss('rev-confirm');
-      const errorMessage = err?.response?.data?.detail || err.message || 'Unknown error';
+      const errorMessage = extractErrorMessage(err);
       setError(errorMessage);
       toast.error(`Failed to revoke authority: ${errorMessage}`);
       return { success: false, error: errorMessage };

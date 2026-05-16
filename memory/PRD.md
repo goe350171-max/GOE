@@ -10,6 +10,23 @@ Build a Solana token launchpad with free token creation (no platform fees), wall
 
 ## What's Implemented (Feb 2026)
 
+### Validation Hardening — Clear, Field-Specific Errors (Feb 2026)
+- Replaced FastAPI's default 422 (array-of-dicts) with a custom `RequestValidationError` handler that returns:
+  - `detail`: clean string `"<field>: <message>"` (or `<field1>: ... | <field2>: ...`) — works directly in frontend toasts
+  - `field_errors`: structured `[{field, message, type}]` for programmatic UIs
+- Raised supply ceiling: `total_supply` now allows up to **10^18** human units; `decimals` allows **0-18** (was 0-9)
+- Added `model_validator` that checks BigInt-safe u64 overflow on `total_supply × 10^decimals`. Error tells user the maximum safe supply for their chosen decimals (e.g., "With decimals=9, max total_supply is 18,446,744,073").
+- Frontend `extractErrorMessage()` helper handles all error shapes (string detail, Pydantic array, structured field_errors, web3.js with logs)
+- Wired through `useTokenOperations`, `useAirdropOperations`, and `Airdrop.js`
+- **Verified working examples**:
+  - 1B supply + 9 decimals → HTTP 200 (was failing before)
+  - 10^18 supply + 9 decimals → HTTP 400 `metadata: total_supply × 10^decimals = ... exceeds Solana u64 max...`
+  - Bad pubkey → `payer: Invalid Solana address for payer: Invalid Base58 string`
+  - Symbol too long → `metadata.symbol: String should have at most 12 characters`
+  - Decimals out of range → `metadata.decimals: Input should be less than or equal to 18`
+  - Bad recipient → `recipients.0.address: Invalid Solana address...`
+- No changes to mint logic, transaction builders, or IPFS flow — validators and error formatting only.
+
 ### Safety-Critical Hardening (Feb 2026) — All P0 Controls Live
 **Default = DEVNET, mainnet is opt-in.** Prevents accidental real-SOL spending.
 - `NetworkContext` (`/app/frontend/src/contexts/NetworkContext.js`): persisted in localStorage; default `devnet`; tracks `testMode` and a 200-entry signed-tx audit log

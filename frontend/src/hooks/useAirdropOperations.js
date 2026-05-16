@@ -4,6 +4,7 @@ import axios from 'axios';
 import { useState, useCallback } from 'react';
 import { useNetwork } from '../contexts/NetworkContext';
 import { simulateTxCost, TX_ACTIONS } from '../utils/txSafety';
+import { extractErrorMessage } from '../utils/errors';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -167,7 +168,7 @@ export function useAirdropOperations() {
               }
             }
           } catch (e) {
-            result = { success: false, signature: null, error: e?.response?.data?.detail || e?.message || String(e) };
+            result = { success: false, signature: null, error: extractErrorMessage(e) };
           }
 
           if (result?.success) {

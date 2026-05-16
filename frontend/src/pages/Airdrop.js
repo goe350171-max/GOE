@@ -15,6 +15,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { useAirdropOperations } from '../hooks/useAirdropOperations';
 import { parseAirdropInput, chunkRecipients, parseCsvText } from '../utils/airdrop';
+import { extractErrorMessage } from '../utils/errors';
 import SafetyConfirmModal from '../components/SafetyConfirmModal';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -71,7 +72,7 @@ const Airdrop = () => {
         if (!cancelled) setMintInfo(info);
       } catch (e) {
         if (!cancelled) {
-          setMintInfo({ error: e?.response?.data?.detail || e.message });
+          setMintInfo({ error: extractErrorMessage(e) });
         }
       } finally {
         if (!cancelled) setMintInfoLoading(false);
