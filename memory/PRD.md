@@ -10,6 +10,18 @@ Build a Solana token launchpad with free token creation (no platform fees), wall
 
 ## What's Implemented (Feb 2026)
 
+### Inline Field Validation on Launchpad (Feb 2026)
+- New `/app/frontend/src/utils/launchpadValidation.js` — pure validators that mirror backend Pydantic constraints exactly (name 1-64, symbol 1-12, decimals 0-18, supply 1..10^18 plus BigInt u64-overflow cross-check, description ≤2000, URL fields with `http/https/ipfs` scheme validation)
+- Wired into `/app/frontend/src/pages/Launchpad.js`:
+  - `fieldErrors` + `touched` state per field
+  - `onBlur` validation per field
+  - Submit gate runs `validateAll()` — if any error, marks all touched, shows toast, blocks submission
+  - Red border (`border-red-500 focus:ring-red-300`) + inline red text under each invalid field
+  - `data-testid="error-<field>"` for each error line (name, symbol, decimals, totalSupply, description, image, twitter, telegram, website)
+  - Reactive re-validation of `totalSupply` whenever `decimals` changes (catches u64 overflow as the user tunes either)
+- Existing toast notifications still fire for transaction-level failures (network/wallet/RPC errors)
+- No changes to submission logic, instruction builders, or any backend behavior
+
 ### Validation Hardening — Clear, Field-Specific Errors (Feb 2026)
 - Replaced FastAPI's default 422 (array-of-dicts) with a custom `RequestValidationError` handler that returns:
   - `detail`: clean string `"<field>: <message>"` (or `<field1>: ... | <field2>: ...`) — works directly in frontend toasts

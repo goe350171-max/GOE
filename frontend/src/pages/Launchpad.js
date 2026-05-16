@@ -12,6 +12,7 @@ import axios from 'axios';
 import { toast } from 'sonner';
 import SuccessModal from '../components/SuccessModal';
 import SafetyConfirmModal from '../components/SafetyConfirmModal';
+import { validateField, validateAll } from '../utils/launchpadValidation';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -62,6 +63,33 @@ const TokenCreationForm = () => {
     revokeFreeze: false,
     revokeUpdate: false
   });
+
+  // Inline field validation
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [touched, setTouched] = useState({});
+
+  const handleBlur = (field) => {
+    const err = validateField(field, formData[field], formData);
+    setTouched((t) => ({ ...t, [field]: true }));
+    setFieldErrors((prev) => ({ ...prev, [field]: err }));
+  };
+
+  // Re-validate cross-field rule (supply × 10^decimals) whenever either changes
+  // and the user has already touched supply.
+  useEffect(() => {
+    if (touched.totalSupply) {
+      const err = validateField('totalSupply', formData.totalSupply, formData);
+      setFieldErrors((prev) => ({ ...prev, totalSupply: err }));
+    }
+  }, [formData.decimals, formData.totalSupply, touched.totalSupply]);
+
+  const showError = (field) => touched[field] && fieldErrors[field];
+  const inputClass = (field, base = '') =>
+    `${base} rounded-none focus:ring-1 ${
+      showError(field)
+        ? 'border-red-500 focus:border-red-600 focus:ring-red-300'
+        : 'border-zinc-300 focus:border-black focus:ring-black'
+    }`;
 
   const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'];
   const MAX_SIZE = 5 * 1024 * 1024; // 5MB
@@ -143,6 +171,18 @@ const TokenCreationForm = () => {
     e.preventDefault();
     
     if (!connected) return;
+
+    // Inline validation gate — show errors instead of attempting submit
+    const { errors, isValid } = validateAll(formData);
+    if (!isValid) {
+      setFieldErrors(errors);
+      setTouched({
+        name: true, symbol: true, decimals: true, totalSupply: true,
+        description: true, image: true, twitter: true, telegram: true, website: true,
+      });
+      toast.error('Please fix the highlighted fields');
+      return;
+    }
 
     // Upload image to IPFS first if a file was selected
     let finalImageUri = imageIpfsUri || formData.image || '';
@@ -232,10 +272,14 @@ const TokenCreationForm = () => {
                   data-testid="token-name-input"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onBlur={() => handleBlur('name')}
                   placeholder="My Token"
                   required
-                  className="rounded-none border-zinc-300 focus:border-black focus:ring-1 focus:ring-black"
+                  className={inputClass('name')}
                 />
+                {showError('name') && (
+                  <p data-testid="error-name" className="text-xs text-red-600 mt-1.5">{fieldErrors.name}</p>
+                )}
               </div>
 
               <div>
@@ -247,11 +291,15 @@ const TokenCreationForm = () => {
                   data-testid="token-symbol-input"
                   value={formData.symbol}
                   onChange={(e) => setFormData({ ...formData, symbol: e.target.value.toUpperCase() })}
+                  onBlur={() => handleBlur('symbol')}
                   placeholder="MTK"
                   required
-                  maxLength={10}
-                  className="rounded-none border-zinc-300 focus:border-black focus:ring-1 focus:ring-black"
+                  maxLength={12}
+                  className={inputClass('symbol')}
                 />
+                {showError('symbol') && (
+                  <p data-testid="error-symbol" className="text-xs text-red-600 mt-1.5">{fieldErrors.symbol}</p>
+                )}
               </div>
 
               <div>
@@ -264,11 +312,15 @@ const TokenCreationForm = () => {
                   type="number"
                   value={formData.decimals}
                   onChange={(e) => setFormData({ ...formData, decimals: e.target.value })}
+                  onBlur={() => handleBlur('decimals')}
                   min="0"
                   max="18"
                   required
-                  className="rounded-none border-zinc-300 focus:border-black focus:ring-1 focus:ring-black"
+                  className={inputClass('decimals')}
                 />
+                {showError('decimals') && (
+                  <p data-testid="error-decimals" className="text-xs text-red-600 mt-1.5">{fieldErrors.decimals}</p>
+                )}
               </div>
 
               <div>
@@ -281,11 +333,15 @@ const TokenCreationForm = () => {
                   type="number"
                   value={formData.totalSupply}
                   onChange={(e) => setFormData({ ...formData, totalSupply: e.target.value })}
+                  onBlur={() => handleBlur('totalSupply')}
                   placeholder="1000000"
                   required
                   min="1"
-                  className="rounded-none border-zinc-300 focus:border-black focus:ring-1 focus:ring-black"
+                  className={inputClass('totalSupply')}
                 />
+                {showError('totalSupply') && (
+                  <p data-testid="error-totalSupply" className="text-xs text-red-600 mt-1.5">{fieldErrors.totalSupply}</p>
+                )}
               </div>
             </div>
 
@@ -298,10 +354,14 @@ const TokenCreationForm = () => {
                 data-testid="token-description-input"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                onBlur={() => handleBlur('description')}
                 placeholder="Describe your token..."
                 rows={3}
-                className="rounded-none border-zinc-300 focus:border-black focus:ring-1 focus:ring-black resize-none"
+                className={inputClass('description', 'resize-none')}
               />
+              {showError('description') && (
+                <p data-testid="error-description" className="text-xs text-red-600 mt-1.5">{fieldErrors.description}</p>
+              )}
             </div>
           </div>
 
@@ -393,10 +453,14 @@ const TokenCreationForm = () => {
                       data-testid="token-image-url-input"
                       value={formData.image}
                       onChange={(e) => setFormData({ ...formData, image: e.target.value })}
+                      onBlur={() => handleBlur('image')}
                       placeholder="https://example.com/image.png"
                       type="url"
-                      className="rounded-none border-zinc-300 focus:border-black focus:ring-1 focus:ring-black text-sm"
+                      className={inputClass('image', 'text-sm')}
                     />
+                    {showError('image') && (
+                      <p data-testid="error-image" className="text-xs text-red-600 mt-1.5">{fieldErrors.image}</p>
+                    )}
                   </div>
                 )}
               </div>
@@ -412,9 +476,13 @@ const TokenCreationForm = () => {
                     data-testid="token-twitter-input"
                     value={formData.twitter}
                     onChange={(e) => setFormData({ ...formData, twitter: e.target.value })}
+                    onBlur={() => handleBlur('twitter')}
                     placeholder="@mytoken"
-                    className="rounded-none border-zinc-300 focus:border-black focus:ring-1 focus:ring-black"
+                    className={inputClass('twitter')}
                   />
+                  {showError('twitter') && (
+                    <p data-testid="error-twitter" className="text-xs text-red-600 mt-1.5">{fieldErrors.twitter}</p>
+                  )}
                 </div>
 
                 <div>
@@ -427,9 +495,13 @@ const TokenCreationForm = () => {
                     data-testid="token-telegram-input"
                     value={formData.telegram}
                     onChange={(e) => setFormData({ ...formData, telegram: e.target.value })}
+                    onBlur={() => handleBlur('telegram')}
                     placeholder="t.me/mytoken"
-                    className="rounded-none border-zinc-300 focus:border-black focus:ring-1 focus:ring-black"
+                    className={inputClass('telegram')}
                   />
+                  {showError('telegram') && (
+                    <p data-testid="error-telegram" className="text-xs text-red-600 mt-1.5">{fieldErrors.telegram}</p>
+                  )}
                 </div>
 
                 <div>
@@ -442,10 +514,14 @@ const TokenCreationForm = () => {
                     data-testid="token-website-input"
                     value={formData.website}
                     onChange={(e) => setFormData({ ...formData, website: e.target.value })}
+                    onBlur={() => handleBlur('website')}
                     placeholder="https://mytoken.com"
                     type="url"
-                    className="rounded-none border-zinc-300 focus:border-black focus:ring-1 focus:ring-black"
+                    className={inputClass('website')}
                   />
+                  {showError('website') && (
+                    <p data-testid="error-website" className="text-xs text-red-600 mt-1.5">{fieldErrors.website}</p>
+                  )}
                 </div>
               </div>
             </div>
