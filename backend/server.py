@@ -15,15 +15,18 @@ from typing import List, Optional
 import uuid
 from datetime import datetime, timezone
 import base64
-import base58
+
 from solders.keypair import Keypair
-from solders.pubkey import Pubkey
-from solders.system_program import create_account, CreateAccountParams, ID as SYS_PROGRAM_ID
+from solders.system_program import (
+    create_account,
+    transfer,
+    TransferParams,
+    CreateAccountParams,
+    ID as SYS_PROGRAM_ID,
+)
 from solders.transaction import Transaction as SoldersTransaction
 from solders.message import Message
-from solders.hash import Hash
 from solders.instruction import Instruction, AccountMeta
-from solders.rpc.responses import GetLatestBlockhashResp
 import asyncio
 import aiohttp
 import struct
@@ -134,6 +137,28 @@ if PINATA_JWT:
     logger.info("✓ Pinata IPFS configured")
 else:
     logger.warning("⚠ Pinata JWT not set – IPFS uploads disabled")
+
+
+
+# ─── Platform Fee Configuration ─────────────────────────────────────────
+
+LAMPORTS_PER_SOL = 1_000_000_000
+
+PLATFORM_FEE_SOL = float(os.environ.get("PLATFORM_FEE_SOL", "0.045"))
+PLATFORM_FEE_LAMPORTS = int(PLATFORM_FEE_SOL * LAMPORTS_PER_SOL)
+
+PLATFORM_WALLET = os.environ.get("PLATFORM_WALLET", "")
+
+PLATFORM_WALLET_PUBKEY = (
+    Pubkey.from_string(PLATFORM_WALLET)
+    if PLATFORM_WALLET
+    else None
+)
+
+logger.info(
+    f"Platform fee: {PLATFORM_FEE_SOL} SOL "
+    f"({PLATFORM_FEE_LAMPORTS} lamports)"
+)
 
 
 async def pin_image_to_ipfs(image_url: str, token_name: str) -> str:
@@ -863,16 +888,28 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             is_mutable=not payload.revoke_update_authority,
         )
         
-        # --- Build instruction list ---
-        instructions = [
-            create_account_ix,      # 1. Create mint account
-            initialize_mint_ix,     # 2. Initialize mint
-            create_metadata_ix,     # 3. Create Metaplex metadata (must be after initMint)
-            create_ata_ix,          # 4. Create ATA for creator
-            mint_to_ix,             # 5. Mint full supply to creator ATA
-        ]
-        
-        # --- Instruction 5+: Revoke authorities AFTER minting ---
+      # --- Build instruction list ---
+instructions = [
+    create_account_ix,      # 1. Create mint account
+    initialize_mint_ix,     # 2. Initialize mint
+    create_metadata_ix,     # 3. Metaplex metadata
+    create_ata_ix,          # 4. Create ATA for creator
+    mint_to_ix,             # 5. Mint full supply
+]
+
+# ─── Platform Fee Transfer ───────────────────────────────────────────────
+if PLATFORM_FEE_LAMPORTS > 0 and PLATFORM_WALLET_PUBKEY:
+    fee_ix = transfer(
+        TransferParams(
+            from_pubkey=payer_pubkey,
+            to_pubkey=PLATFORM_WALLET_PUBKEY,
+            lamports=PLATFORM_FEE_LAMPORTS,
+        )
+    )
+    instructions.append(fee_ix)
+    logger.info(f"  + Platform fee charged: {PLATFORM_FEE_SOL} SOL")
+
+# --- Instruction 5+: Revoke authorities AFTER minting ---
         if payload.revoke_mint_authority:
             instructions.append(
                 build_set_authority_ix(mint_pubkey, payer_pubkey, 0, None)
@@ -967,6 +1004,8 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             "imageUri": image_ipfs_uri,
             "mintKeypair": base64.b64encode(mint_secret).decode('utf-8'),
             "totalMinted": str(mint_amount),
+            "platformFee": PLATFORM_FEE_SOL,
+            "platformFeeLamports": PLATFORM_FEE_LAMPORTS,
             "explorerUrl": f"https://explorer.solana.com/address/{mint_address}",
             "message": "Transaction ready for signing"
         }
