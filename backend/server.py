@@ -131,6 +131,7 @@ elif 'devnet' in SOLANA_RPC_URL.lower():
 # ─── Pinata IPFS Configuration ──────────────────────────────────────────
 PINATA_JWT = os.environ.get('PINATA_JWT', '')
 PINATA_API_URL = "https://api.pinata.cloud"
+PINATA_FILE_URL = "https://api.pinata.cloud/pinning/pinFileToIPFS"
 PINATA_GATEWAY = "https://gateway.pinata.cloud/ipfs"
 
 if PINATA_JWT:
@@ -191,7 +192,7 @@ async def pin_image_to_ipfs(image_url: str, token_name: str) -> str:
         form.add_field('pinataOptions', '{"cidVersion":1}')
 
         async with session.post(
-            f"{PINATA_API_URL}/pinning/pinFileToIPFS",
+            "https://api.pinata.cloud/pinning/pinFileToIPFS",
             headers={"Authorization": f"Bearer {PINATA_JWT}"},
             data=form,
             timeout=aiohttp.ClientTimeout(total=60)
@@ -219,7 +220,7 @@ async def pin_json_to_ipfs(metadata: dict, token_name: str) -> str:
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{PINATA_API_URL}/pinning/pinJSONToIPFS",
+            "https://api.pinata.cloud/pinning/pinJSONToIPFS",
             headers={
                 "Authorization": f"Bearer {PINATA_JWT}",
                 "Content-Type": "application/json"
