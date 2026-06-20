@@ -889,40 +889,40 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             is_mutable=not payload.revoke_update_authority,
         )
         
-      # --- Build instruction list ---
-instructions = [
-    create_account_ix,      # 1. Create mint account
-    initialize_mint_ix,     # 2. Initialize mint
-    create_metadata_ix,     # 3. Metaplex metadata
-    create_ata_ix,          # 4. Create ATA for creator
-    mint_to_ix,             # 5. Mint full supply
-]
+                # --- Build instruction list ---
+        instructions = [
+            create_account_ix,
+            initialize_mint_ix,
+            create_metadata_ix,
+            create_ata_ix,
+            mint_to_ix,
+        ]
 
-# ─── Platform Fee Transfer ───────────────────────────────────────────────
-if PLATFORM_FEE_LAMPORTS > 0 and PLATFORM_WALLET_PUBKEY:
-    fee_ix = transfer(
-        TransferParams(
-            from_pubkey=payer_pubkey,
-            to_pubkey=PLATFORM_WALLET_PUBKEY,
-            lamports=PLATFORM_FEE_LAMPORTS,
-        )
-    )
-    instructions.append(fee_ix)
-    logger.info(f"  + Platform fee charged: {PLATFORM_FEE_SOL} SOL")
+        # ─── Platform Fee Transfer ───────────────────────────────────────
+        if PLATFORM_FEE_LAMPORTS > 0 and PLATFORM_WALLET_PUBKEY:
+            fee_ix = transfer(
+                TransferParams(
+                    from_pubkey=payer_pubkey,
+                    to_pubkey=PLATFORM_WALLET_PUBKEY,
+                    lamports=PLATFORM_FEE_LAMPORTS,
+                )
+            )
+            instructions.append(fee_ix)
+            logger.info(f"  + Platform fee charged: {PLATFORM_FEE_SOL} SOL")
 
-# --- Instruction 5+: Revoke authorities AFTER minting ---
+        # --- Instruction 5+: Revoke authorities AFTER minting ---
         if payload.revoke_mint_authority:
             instructions.append(
                 build_set_authority_ix(mint_pubkey, payer_pubkey, 0, None)
             )
             logger.info("  + Revoke mint authority")
-        
+
         if payload.revoke_freeze_authority:
             instructions.append(
                 build_set_authority_ix(mint_pubkey, payer_pubkey, 1, None)
             )
             logger.info("  + Revoke freeze authority")
-        
+
         # --- Build transaction ---
         msg = Message.new_with_blockhash(
             instructions,
