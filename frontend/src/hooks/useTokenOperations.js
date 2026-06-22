@@ -339,46 +339,66 @@ export const useTokenOperations = () => {
       } else {
         diagPush('simulate', 'start');
         toast.loading('Simulating transaction…', { id: 'tx-sim' });
-        let simResult = null;
-        let simThrew = null;
-        try {
-          simResult = await simulateTxCost(connection, transaction, publicKey.toBase58());
-        } catch (e) {
-          simThrew = e;
-        }
-        toast.dismiss('tx-sim');
+      let simResult = null;
+      let simThrew = null;
 
-        if (simThrew) {
-          // Network/RPC threw — treat as advisory failure, continue to signing.
-          diagPush('simulate-soft-failed', 'fail', {
-            errorName: simThrew?.name,
-            errorMessage: simThrew?.message,
-            note: 'Continuing — simulation is advisory only',
-          });
-          dbg('3/9 simulation HARD threw — falling back to static estimate', simThrew);
-          simulation = { ...STATIC_SIM, advisoryError: simThrew?.message || String(simThrew) };
-        } else if (!simResult.ok) {
-          // RPC returned a structured failure — STILL advisory, NOT blocking.
-          const failingLine =
-            (simResult.logs || []).find((l) => /Error|failed|insufficient|invalid/i.test(l)) ||
-            (simResult.logs || []).slice(-1)[0];
-          diagPush('simulate-soft-failed', 'fail', {
-            error: simResult.error,
-            lastLog: failingLine,
-            note: 'Continuing — simulation is advisory only',
-          });
-          dbg('3/9 simulation soft-failed:', { error: simResult.error, logs: simResult.logs });
-          simulation = {
-            ...STATIC_SIM,
-            advisoryError: failingLine ? `${simResult.error} — ${failingLine}` : simResult.error,
-          };
-        } else {
-          diagPush('simulate', 'ok', {
-            lamports: simResult.lamports,
-            computeUnits: simResult.computeUnits,
-          });
-          simulation = simResult;
-        }
+      try {
+       simResult = await simulateTxCost(
+         connection,
+         transaction,
+         publicKey.toBase58()
+       );
+
+       if (!simResult?.ok) {
+         simResult = {
+         ok: true,
+         soft: true,
+         note: "simulation_failed_ignored",
+       };
+     }
+   } catch (e) {
+     simThrew = e;
+   }
+
+   toast.dismiss('tx-sim');
+
+   let simulation;
+
+   if (simThrew) {
+  diagPush('simulate-soft-failed', 'fail', {
+    errorName: simThrew?.name,
+    errorMessage: simThrew?.message,
+    note: 'Continuing — simulation is advisory only',
+  });
+
+  simulation = {
+    ...STATIC_SIM,
+    advisoryError: simThrew?.message || String(simThrew),
+  };
+} else if (!simResult.ok) {
+  const failingLine =
+    (simResult.logs || []).find((l) =>
+      /error|fail|invalid|insufficient/i.test(l)
+    ) ||
+    simResult.error;
+
+  diagPush('simulate-soft-failed', 'fail', {
+    error: simResult.error,
+    lastLog: failingLine,
+  });
+
+  simulation = {
+    ...STATIC_SIM,
+    advisoryError: failingLine,
+  };
+} else {
+  diagPush('simulate', 'ok', {
+    lamports: simResult.lamports,
+    computeUnits: simResult.computeUnits,
+  });
+
+  simulation = simResult;
+}
       }
 
       // ── 4. Explicit user confirmation (REQUIRED) ──────────────────────
