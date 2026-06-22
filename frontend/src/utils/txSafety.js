@@ -55,15 +55,27 @@ export async function simulateTxCost(connection, transaction, payerStr) {
   }
 
   if (value.err) {
-    return {
-      ok: false,
-      error: typeof value.err === 'string' ? value.err : JSON.stringify(value.err),
-      lamports: 0, sol: 0, baseFeeLamports: 0, rentLamports: 0,
-      computeUnits: value.unitsConsumed || 0,
-      logs: value.logs || [],
-      preBalanceLamports: preBalance, postBalanceLamports: preBalance,
-    };
-  }
+   console.log("===== SIMULATION ERROR =====");
+   console.log(value.err);
+   console.log(value.logs);
+   console.log("============================");
+
+   return {
+     ok: false,
+     error:
+       typeof value.err === "string"
+         ? value.err
+         : JSON.stringify(value.err),
+    lamports: 0,
+    sol: 0,
+    baseFeeLamports: 0,
+    rentLamports: 0,
+    computeUnits: value.unitsConsumed || 0,
+    logs: value.logs || [],
+    preBalanceLamports: preBalance,
+    postBalanceLamports: preBalance,
+  };
+}
 
   // We didn't request accounts back in the config (see comment above), so we
   // approximate cost from the base fee × signature count.
