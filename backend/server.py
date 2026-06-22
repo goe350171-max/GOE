@@ -951,6 +951,21 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         
         tx = SoldersTransaction.new_unsigned(msg)
         tx_serialized = bytes(tx)
+
+        # ---------- TX SUMMARY ----------
+        logger.info("========== TX SUMMARY ==========")
+        logger.info(f"Serialized size: {len(tx_serialized)} bytes")
+        logger.info(f"Instructions: {len(instructions)}")
+        logger.info(f"Recent blockhash: {recent_blockhash}")
+        logger.info(f"Payer: {payer_pubkey}")
+        logger.info(f"Mint: {mint_pubkey}")
+        logger.info("================================")
+
+        # ---------- SERIALIZED TX ----------
+        logger.info("===== SERIALIZED TX =====")
+        logger.info(base64.b64encode(tx_serialized).decode())
+        logger.info("=========================")
+
         mint_secret = bytes(mint_keypair)
 
         # Defense in depth: enforce Solana wire-format 1232-byte cap before
