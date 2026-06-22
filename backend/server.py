@@ -925,6 +925,23 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             )
             logger.info("  + Revoke freeze authority")
 
+        # ---------- DEBUG ----------
+        logger.info("========== TRANSACTION DEBUG ==========")
+
+        for i, ix in enumerate(instructions):
+            logger.info(f"Instruction #{i}")
+            logger.info(f"  Program: {ix.program_id}")
+            logger.info(f"  Accounts: {len(ix.accounts)}")
+
+            for j, acc in enumerate(ix.accounts):
+                logger.info(
+                    f"    [{j}] {acc.pubkey} "
+                    f"signer={acc.is_signer} "
+                    f"writable={acc.is_writable}"
+                )
+
+        logger.info("=======================================")
+
         # --- Build transaction ---
         msg = Message.new_with_blockhash(
             instructions,
