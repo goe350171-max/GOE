@@ -946,9 +946,9 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         msg = Message.new_with_blockhash(
             instructions,
             payer_pubkey,
-            recent_blockhash
+            recent_blockhash,
         )
-        
+
         tx = SoldersTransaction.new_unsigned(msg)
         tx_serialized = bytes(tx)
 
