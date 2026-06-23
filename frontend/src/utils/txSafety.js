@@ -33,16 +33,27 @@ export async function simulateTxCost(connection, transaction, payerStr) {
   // We can still compute the cost from the standard fee + rent breakdown if
   // accounts response is absent (no accounts field → fall back to baseFee).
   let sim;
-  try {
-    sim = await connection.simulateTransaction(transaction, {
-      sigVerify: false,
-      replaceRecentBlockhash: true,
-      commitment: 'confirmed',
-    });
-  } catch (e) {
-    // Re-throw so the caller's try/catch can mark this as a soft failure.
-    throw e;
-  }
+
+try {
+  sim = await connection.simulateTransaction(transaction, {
+    sigVerify: false,
+    replaceRecentBlockhash: true,
+    commitment: "processed",
+  });
+} catch (e) {
+  return {
+    ok: false,
+    error: e.message,
+    lamports: 0,
+    sol: 0,
+    baseFeeLamports: 0,
+    rentLamports: 0,
+    computeUnits: 0,
+    logs: [],
+    preBalanceLamports: preBalance,
+    postBalanceLamports: preBalance,
+  };
+}
 
   const value = sim?.value;
   if (!value) {
