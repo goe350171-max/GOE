@@ -294,6 +294,16 @@ export const useTokenOperations = () => {
         });
         dbg('2/9 tx inspection', inspectResult);
 
+        console.log(
+          "Transaction Instructions:",
+          transaction.instructions.map((ix, i) => ({
+            index: i,
+            program: ix.programId.toBase58(),
+            accounts: ix.keys.length,
+            dataLength: ix.data.length,
+          }))
+        );
+
         if (inspectResult.issues.length > 0) {
           const issueMsg = `Transaction inspection failed: ${inspectResult.issues.join(', ')}`;
           toast.error(issueMsg);
