@@ -930,12 +930,13 @@ async def create_token(request: Request, payload: TokenCreationRequest):
 
         for i, ix in enumerate(instructions):
             logger.info(f"Instruction #{i}")
-            logger.info(f"  Program: {ix.program_id}")
-            logger.info(f"  Accounts: {len(ix.accounts)}")
+            logger.info(f"Program: {ix.program_id}")
+            logger.info(f"Data Length: {len(ix.data)}")
+            logger.info(f"Data (hex): {ix.data.hex()}")
 
             for j, acc in enumerate(ix.accounts):
                 logger.info(
-                    f"    [{j}] {acc.pubkey} "
+                    f"[{j}] {acc.pubkey} "
                     f"signer={acc.is_signer} "
                     f"writable={acc.is_writable}"
                 )
