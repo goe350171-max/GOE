@@ -362,7 +362,7 @@ export const useTokenOperations = () => {
 
    toast.dismiss('tx-sim');
 
-   let simulation;
+   
 
    if (simThrew) {
   diagPush('simulate-soft-failed', 'fail', {
