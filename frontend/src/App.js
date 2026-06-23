@@ -11,6 +11,7 @@ import Header from './components/Header';
 import Launchpad from './pages/Launchpad';
 import Explorer from './pages/Explorer';
 import Airdrop from './pages/Airdrop';
+import PhantomTest from './pages/PhantomTest';
 import './App.css';
 
 function App() {
@@ -28,6 +29,7 @@ function App() {
                     <Route path="/" element={<Launchpad />} />
                     <Route path="/explorer" element={<Explorer />} />
                     <Route path="/airdrop" element={<Airdrop />} />
+                    <Route path="/phantom-test" element={<PhantomTest />} />  
                   </Routes>
                 </main>
                 <DiagnosticsPanel />
