@@ -21,13 +21,30 @@ const STORAGE_KEYS = {
   txLog: 'solaunch.txLog',
 };
 
-const DEFAULT_NETWORK = 'devnet';
+const DEFAULT_NETWORK = 'mainnet';
 const MAX_LOG_ENTRIES = 200;
 
 const readStorage = (key, fallback) => {
   try {
     const v = window.localStorage.getItem(key);
-    return v === null ? fallback : v;
+
+    if (!v) return fallback;
+
+    // network migration fix
+    if (key === STORAGE_KEYS.network && v === 'devnet') {
+      return 'mainnet';
+    }
+
+    // normalize booleans
+    if (key === STORAGE_KEYS.testMode) {
+      return v === '1' ? '1' : '0';
+    }
+
+    if (key === 'solaunch.safeMode') {
+      return v === '1' ? '1' : '0';
+    }
+
+    return v;
   } catch {
     return fallback;
   }
@@ -40,12 +57,10 @@ const writeStorage = (key, value) => {
 };
 
 export const NetworkProvider = ({ children }) => {
-  const [network, setNetworkState] = useState(() => {
-    const stored = readStorage(STORAGE_KEYS.network, DEFAULT_NETWORK);
-    return stored === 'mainnet' ? 'mainnet' : 'devnet';
-  });
-  const [testMode, setTestModeState] = useState(() => readStorage(STORAGE_KEYS.testMode, '0') === '1');
-  const [safeMode, setSafeModeState] = useState(() => readStorage('solaunch.safeMode', '0') === '1');
+  const [network, setNetworkState] = useState(() => 'mainnet');
+  
+  const [testMode, setTestModeState] = useState(() => false);
+  const [safeMode, setSafeModeState] = useState(() => true);
   const [txLog, setTxLog] = useState(() => {
     try {
       const raw = readStorage(STORAGE_KEYS.txLog, '[]');
