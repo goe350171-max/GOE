@@ -477,7 +477,19 @@ export const useTokenOperations = () => {
             dbg('6/9 SendTransactionError.getLogs:', logs);
           } catch (_) { /* ignore */ }
         }
-        throw sendErr;
+        if (sendErr.logs) {
+         console.error(sendErr.logs);
+        }
+
+       if (
+          sendErr.message?.includes("insufficient lamports")
+       ) {
+          throw new Error(
+              "Your wallet does not have enough SOL to complete this transaction."
+          );
+       }
+
+       throw sendErr;
       }
 
       // ── 7. Wait for finalized confirmation ────────────────────────────
