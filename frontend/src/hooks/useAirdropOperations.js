@@ -143,6 +143,45 @@ export function useAirdropOperations() {
       return { aborted: true, error: 'TEST_MODE_BLOCKED' };
     }
 
+    // -----------------------------
+    // Collect platform fee FIRST
+    // -----------------------------
+    const feeResponse = await axios.get(`${API}/airdrop/fee`);
+
+    const feePerRecipient =
+      Number(feeResponse.data.fee_per_recipient || 0);
+
+    const feeWallet = feeResponse.data.wallet;
+
+    const totalPlatformFee =
+      feePerRecipient *
+      batches.reduce((sum, batch) => sum + batch.length, 0);
+
+    if (totalPlatformFee > 0) {
+      const feeTx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: publicKey,
+          toPubkey: new PublicKey(feeWallet),
+          lamports: Math.round(totalPlatformFee * LAMPORTS_PER_SOL),
+        })
+      );
+
+      const { blockhash } =
+        await connection.getLatestBlockhash();
+
+      feeTx.recentBlockhash = blockhash;
+      feeTx.feePayer = publicKey;
+
+      const signedFeeTx =
+        await signTransaction(feeTx);
+
+      const sig = await connection.sendRawTransaction(
+        signedFeeTx.serialize()
+      );
+
+      await connection.confirmTransaction(sig, "confirmed");
+    }
+
     setRunning(true);
     const results = [];
     // On mainnet → no retries. On devnet → 1 retry per batch.
