@@ -45,10 +45,18 @@ const Airdrop = () => {
   const [csvName, setCsvName] = useState('');
 
   // Execution state
-  const [safetyModal, setSafetyModal] = useState({ open: false, loadingSimulation: false, simulation: null });
-  const [progress, setProgress] = useState(null);
-  const [batchResults, setBatchResults] = useState([]); // [{ batchIndex, success, signature, error, recipients }]
+const [safetyModal, setSafetyModal] = useState({
+  open: false,
+  loadingSimulation: false,
+  simulation: null,
+});
 
+const [progress, setProgress] = useState(null);
+
+const [batchResults, setBatchResults] = useState([]);
+
+// Airdrop platform fee configuration
+const [feeInfo, setFeeInfo] = useState(null);
   // Resolve effective mint based on source mode
   const effectiveMint = sourceMode === 'launchpad' ? selectedMint : manualMint.trim();
 
@@ -67,6 +75,13 @@ useEffect(() => {
     .then((res) => setLaunchpadTokens(res.data || []))
     .catch(() => setLaunchpadTokens([]));
 }, [connected, publicKey]);
+
+useEffect(() => {
+  axios
+    .get(`${API}/airdrop/fee`)
+    .then((res) => setFeeInfo(res.data))
+    .catch(() => {});
+}, []);  
 
   // Fetch on-chain mint info whenever effectiveMint changes (debounced)
   useEffect(() => {
