@@ -1155,7 +1155,13 @@ async def verify_token_on_chain(mint_address: str):
 @api_router.get("/tokens", response_model=List[TokenRecord])
 async def get_tokens():
     try:
-        tokens = await db.tokens.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+        tokens = await db.tokens.find(
+            {
+                "transaction_signature": {"$ne": None},
+                "on_chain_verified": True,
+            },
+            {"_id": 0}
+        ).sort("created_at", -1).to_list(100)
 
         for token in tokens:
             if isinstance(token.get("created_at"), str):
@@ -1173,8 +1179,9 @@ async def get_my_tokens(wallet: str):
     try:
         tokens = await db.tokens.find(
             {
-                 "creator": wallet,
-                 "status": "success"
+                "creator": wallet,
+                "transaction_signature": {"$ne": None},
+                "on_chain_verified": True,
             },
             {"_id": 0}
         ).sort("created_at", -1).to_list(100)
