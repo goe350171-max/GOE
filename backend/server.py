@@ -1036,6 +1036,24 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         
+        # Estimated costs
+        mint_rent_sol = 0.001462
+        metadata_rent_sol = 0.005617
+        ata_rent_sol = 0.002039
+        network_fee_sol = 0.000010
+
+        estimated_network_cost = (
+            mint_rent_sol +
+            metadata_rent_sol +
+            ata_rent_sol +
+            network_fee_sol
+        )
+
+        estimated_total_cost = (
+            PLATFORM_FEE_SOL +
+            estimated_network_cost
+        )
+
         return {
             "transaction": base64.b64encode(tx_serialized).decode('utf-8'),
             "mint": mint_address,
@@ -1045,8 +1063,13 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             "imageUri": image_ipfs_uri,
             "mintKeypair": base64.b64encode(mint_secret).decode('utf-8'),
             "totalMinted": str(mint_amount),
+
             "platformFee": PLATFORM_FEE_SOL,
             "platformFeeLamports": PLATFORM_FEE_LAMPORTS,
+
+            "estimatedNetworkCost": estimated_network_cost,
+            "estimatedTotalCost": estimated_total_cost,
+
             "explorerUrl": f"https://explorer.solana.com/address/{mint_address}",
             "message": "Transaction ready for signing"
         }
