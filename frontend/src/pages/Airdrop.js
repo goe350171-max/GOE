@@ -542,12 +542,13 @@ useEffect(() => {
         simulation={safetyModal?.simulation}
         actionLabel={`Airdrop · ${parsed.valid.length} recipients · ${batches.length} tx`}
         walletAddress={publicKey?.toBase58() || ''}
-        breakdownLines={[
-          {
+        
+          platformFee={{
             label: "Platform fee",
             value: `${platformFeeSol.toFixed(6)} SOL`,
-          },
+          }}
 
+        breakdownLines={[
           {
             label: "Recipients",
             value: String(parsed.valid.length),
