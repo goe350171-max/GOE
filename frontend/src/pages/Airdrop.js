@@ -133,14 +133,10 @@ useEffect(() => {
 
   const estimatedFeeSol = (batches.length * FEE_PER_BATCH_SOL).toFixed(6);
 
-  // Platform fee
-  const AIRDROP_PLATFORM_FEE_USD_PER_RECIPIENT = 0.10;
-
   const recipientCount = parsed.valid.length;
 
-  const platformFeeUsd =
-    recipientCount * AIRDROP_PLATFORM_FEE_USD_PER_RECIPIENT;
-
+  const platformFeeSol =
+    (feeInfo?.fee_per_recipient || 0) * recipientCount;
   const handleCsvFile = async (file) => {
     if (!file) return;
     if (file.size > 1024 * 1024) {
@@ -452,7 +448,7 @@ useEffect(() => {
 
              <Stat
                label="Platform Fee"
-               value={`$${platformFeeUsd.toFixed(2)}`}
+               value={`${platformFeeSol.toFixed(6)} SOL`}
                testid="dry-platform-fee"
              />
            </div>
