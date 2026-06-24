@@ -26,8 +26,16 @@ const COST = {
   metadataRent: 5_616_720,
   ataRent: 2_039_280,
   networkFee: 10_000, // 2 signatures × 5000
+
+  // Platform fee (0.045 SOL)
+  platformFee: 45_000_000,
 };
-const TOTAL_LAMPORTS = COST.mintRent + COST.metadataRent + COST.ataRent + COST.networkFee;
+const TOTAL_LAMPORTS =
+  COST.mintRent +
+  COST.metadataRent +
+  COST.ataRent +
+  COST.networkFee +
+  COST.platformFee;
 
 const fmtSol = (lamports) => (lamports / LAMPORTS_PER_SOL).toFixed(6);
 
@@ -64,6 +72,7 @@ const CostPreviewChip = ({ valid }) => {
       </p>
 
       <ul className="mt-3 text-[11px] text-zinc-600 space-y-1" data-testid="cost-preview-breakdown">
+        <Row label="Platform fee" value={fmtSol(COST.platformFee)} />
         <Row label="Mint account rent" value={fmtSol(COST.mintRent)} />
         <Row label="Metadata PDA rent" value={fmtSol(COST.metadataRent)} />
         <Row label="Your ATA rent" value={fmtSol(COST.ataRent)} />
