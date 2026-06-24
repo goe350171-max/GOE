@@ -118,6 +118,14 @@ useEffect(() => {
 
   const estimatedFeeSol = (batches.length * FEE_PER_BATCH_SOL).toFixed(6);
 
+  // Platform fee
+  const AIRDROP_PLATFORM_FEE_USD_PER_RECIPIENT = 0.10;
+
+  const recipientCount = parsed.valid.length;
+
+  const platformFeeUsd =
+    recipientCount * AIRDROP_PLATFORM_FEE_USD_PER_RECIPIENT;
+
   const handleCsvFile = async (file) => {
     if (!file) return;
     if (file.size > 1024 * 1024) {
@@ -400,12 +408,39 @@ useEffect(() => {
               <h2 className="text-xl sm:text-2xl font-bold tracking-tighter">3. Review &amp; send</h2>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-              <Stat label="Recipients" value={parsed.valid.length} testid="dry-recipients" />
-              <Stat label="Total tokens" value={totalAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })} testid="dry-total" />
-              <Stat label="Batches" value={batches.length} testid="dry-batches" />
-              <Stat label="Est. SOL fee" value={`~${estimatedFeeSol}`} testid="dry-fee" />
-            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
+             <Stat
+               label="Recipients"
+               value={parsed.valid.length}
+               testid="dry-recipients"
+             />
+
+             <Stat
+               label="Total tokens"
+               value={totalAmount.toLocaleString(undefined, {
+                 maximumFractionDigits: 6,
+               })}
+               testid="dry-total"
+             />
+
+             <Stat
+               label="Batches"
+               value={batches.length}
+               testid="dry-batches"
+             />
+
+             <Stat
+               label="Network Fee"
+               value={`~${estimatedFeeSol} SOL`}
+               testid="dry-network-fee"
+             />
+
+             <Stat
+               label="Platform Fee"
+               value={`$${platformFeeUsd.toFixed(2)}`}
+               testid="dry-platform-fee"
+             />
+           </div>
 
             {insufficient && (
               <div className="border border-red-300 bg-red-50 p-4 mb-4 flex items-start gap-3" data-testid="insufficient-warning">
