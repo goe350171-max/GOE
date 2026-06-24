@@ -162,6 +162,10 @@ export const useTokenOperations = () => {
 
     setLoading(true);
     setError(null);
+
+    // Keep mint available for the catch block
+    let mint = null;
+
     diagClear();
     diagPush('init', 'start', {
       walletName: wallet?.adapter?.name || 'unknown',
@@ -213,13 +217,16 @@ export const useTokenOperations = () => {
       const {
         transaction: txData,
         mintKeypair: mintKeypairData,
-        mint: backendMint,
+        mint: responseMint,
         ata,
         totalMinted,
         metadataUri,
         metadataPda,
         imageUri,
+        explorerUrl,
       } = response.data;
+
+      mint = responseMint;
 
       // Save it so the catch block can use it
       mint = backendMint;
