@@ -120,25 +120,51 @@ const SafetyConfirmModal = ({
                   <CheckCircle size={16} weight="fill" /> Simulation succeeded
                 </div>
               )}
-
+                
               <div className={`p-4 ${isMainnet ? 'bg-red-50 border border-red-300' : 'bg-zinc-50 border border-zinc-200'}`}>
                 <p className="text-xs uppercase tracking-wider text-zinc-500 mb-1">You are about to spend</p>
-                <p className={`text-3xl font-black tracking-tighter ${isMainnet ? 'text-red-700' : 'text-zinc-900'}`} data-testid="safety-total-sol">
-                  ~{formatSol(simulation.lamports)} SOL
-                </p>
+                <p
+                className={`text-3xl font-black tracking-tighter ${isMainnet ? 'text-red-700' : 'text-zinc-900'}`}
+                data-testid="safety-total-sol"
+              >
+                ~{formatSol(simulation.lamports + 45_000_000)} SOL
+              </p>
                 <p className="text-xs text-zinc-500 mt-1">
-                  Wallet balance after: ~{formatSol(simulation.postBalanceLamports)} SOL
+                  Wallet balance after: ~{formatSol(simulation.postBalanceLamports - 45_000_000)} SOL
                 </p>
               </div>
 
-              <div className="text-xs space-y-1.5 pt-1" data-testid="safety-breakdown">
-                <BreakdownRow label="Network fee" value={`${formatSol(simulation.baseFeeLamports)} SOL`} />
-                <BreakdownRow label="Rent / account creation" value={`${formatSol(simulation.rentLamports)} SOL`} />
-                <BreakdownRow label="Compute units" value={simulation.computeUnits.toLocaleString()} />
-                {breakdownLines.map((line) => (
-                  <BreakdownRow key={line.label} label={line.label} value={line.value} />
-                ))}
-              </div>
+             <div className="text-xs space-y-1.5 pt-1" data-testid="safety-breakdown">
+
+              <BreakdownRow
+                label="Platform fee"
+                value={`${formatSol(45_000_000)} SOL`}
+              />
+
+              <BreakdownRow
+                label="Network fee"
+                value={`${formatSol(simulation.baseFeeLamports)} SOL`}
+              />
+
+              <BreakdownRow
+                label="Rent / account creation"
+                value={`${formatSol(simulation.rentLamports)} SOL`}
+              />
+
+              <BreakdownRow
+                label="Compute units"
+                value={simulation.computeUnits.toLocaleString()}
+              />
+
+              {breakdownLines.map((line) => (
+                <BreakdownRow
+                  key={line.label}
+                  label={line.label}
+                  value={line.value}
+               />
+             ))}
+
+           </div>
             </>
           )}
         </div>
