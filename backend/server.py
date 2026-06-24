@@ -1001,8 +1001,10 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             creator=payload.payer,
             mint_authority_revoked=payload.revoke_mint_authority,
             freeze_authority_revoked=payload.revoke_freeze_authority,
-            update_authority_revoked=payload.revoke_update_authority
-        )
+            update_authority_revoked=payload.revoke_update_authority,
+
+            status="pending"
+       )
         
         doc = token_record.model_dump()
         doc['created_at'] = doc['created_at'].isoformat()
@@ -1010,6 +1012,9 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         doc['metadata_pda'] = str(metadata_pda)
         doc['metadata_uri'] = metadata_uri
         doc['image_ipfs_uri'] = image_ipfs_uri
+
+        doc["status"] = "pending"
+        
         await db.tokens.insert_one(doc)
         
         elapsed = round(time.time() - start_time, 2)
@@ -1111,32 +1116,41 @@ async def verify_token_on_chain(mint_address: str):
 async def get_tokens():
     try:
         tokens = await db.tokens.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
-        
+
         for token in tokens:
-            if isinstance(token.get('created_at'), str):
-                token['created_at'] = datetime.fromisoformat(token['created_at'])
-        
+            if isinstance(token.get("created_at"), str):
+                token["created_at"] = datetime.fromisoformat(token["created_at"])
+
         return tokens
+
     except Exception as e:
         logger.error(f"Error fetching tokens: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
-@api_router.get("/tokens/{mint}")
-async def get_token(mint: str):
+
+@api_router.get("/my-tokens")
+async def get_my_tokens(wallet: str):
     try:
-        token = await db.tokens.find_one({"mint": mint}, {"_id": 0})
-        if not token:
-            raise HTTPException(status_code=404, detail="Token not found")
-        
-        if isinstance(token.get('created_at'), str):
-            token['created_at'] = datetime.fromisoformat(token['created_at'])
-        
-        return token
-    except HTTPException:
-        raise
+        tokens = await db.tokens.find(
+            {
+                "creator": wallet,
+                "status": "success"
+            },
+            {"_id": 0}
+        ).sort("created_at", -1).to_list(100)
+
+        for token in tokens:
+            if isinstance(token.get("created_at"), str):
+                token["created_at"] = datetime.fromisoformat(token["created_at"])
+
+        return tokens
+
     except Exception as e:
-        logger.error(f"Error fetching token: {str(e)}")
+        logger.error(f"Error fetching my tokens: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+        
+        @api_router.get("/tokens/{mint}")
+        async def get_token(mint: str):
 
 @api_router.post("/tokens/revoke-authority")
 @limiter.limit("5/minute")
