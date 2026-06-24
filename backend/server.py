@@ -1089,7 +1089,7 @@ async def update_token_signature(mint: str, signature: str, verified: bool = Fal
             "token": updated_token
         }
     except Exception as e:
-    raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @api_router.post("/tokens/update-status")
