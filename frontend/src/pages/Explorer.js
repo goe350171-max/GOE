@@ -37,6 +37,8 @@ const TokenExplorer = () => {
     try {
       setLoading(true);
       const response = await axios.get(`${API}/tokens`);
+      
+      console.log(response.data);
 
       const myTokens = publicKey
         ? response.data.filter(
