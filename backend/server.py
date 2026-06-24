@@ -1065,14 +1065,29 @@ async def update_token_signature(mint: str, signature: str, verified: bool = Fal
             "transaction_signature": signature,
             "on_chain_verified": verified,
             "on_chain_supply": on_chain_supply,
-            "status": "success" if verified else "failed",
+            "status": "success",
+            "confirmed_at": datetime.now(timezone.utc).isoformat(),
+            "explorer_url": f"https://explorer.solana.com/tx/{signature}",
         }
         await db.tokens.update_one(
             {"mint": mint},
             {"$set": update_fields}
         )
-        logger.info(f"Token {mint} updated: sig={signature[:12]}... verified={verified} supply={on_chain_supply}")
-        return {"success": True}
+
+        updated_token = await db.tokens.find_one(
+            {"mint": mint},
+            {"_id": 0}
+        )
+
+        logger.info(
+            f"Token {mint} updated: sig={signature[:12]}... "
+            f"verified={verified} supply={on_chain_supply}"
+        )
+
+        return {
+            "success": True,
+            "token": updated_token
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
