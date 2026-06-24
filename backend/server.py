@@ -351,6 +351,9 @@ class AirdropBatchRequest(BaseModel):
     recipients: List[AirdropRecipient] = Field(..., min_length=1, max_length=15)
     decimals: int = Field(..., ge=0, le=9)
 
+    # Phantom signature proving platform fee payment
+    fee_signature: str
+
     @field_validator('mint', 'payer')
     @classmethod
     def _v_pk(cls, v):
