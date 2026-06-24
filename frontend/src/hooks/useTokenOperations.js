@@ -579,6 +579,23 @@ export const useTokenOperations = () => {
       // eslint-disable-next-line no-console
       console.error('Token creation error:', err);
       const errorMessage = extractErrorMessage(err);
+      try {
+        if (typeof mint !== "undefined" && mint) {
+          await axios.post(
+            `${API}/tokens/update-status`,
+            null,
+            {
+              params: {
+                mint,
+                status: "failed",
+                error: errorMessage,
+              },
+            }
+          );
+        }
+      } catch (e) {
+        console.warn("Unable to update failed status", e);
+      }
       diagPush('UNCAUGHT', 'fail', {
         errorName: err?.name,
         errorMessage: err?.message,
