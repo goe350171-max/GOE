@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useWallet } from '@solana/wallet-adapter-react';
 import axios from 'axios';
 import { MagnifyingGlass, Check, X, ArrowSquareOut } from '@phosphor-icons/react';
 import { Input } from '../components/ui/input';
@@ -7,14 +8,15 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
 const TokenExplorer = () => {
+  const { publicKey } = useWallet();
   const [tokens, setTokens] = useState([]);
   const [filteredTokens, setFilteredTokens] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-
+  
   useEffect(() => {
     fetchTokens();
-  }, []);
+  }, [publicKey]);
 
   useEffect(() => {
     if (searchQuery) {
@@ -24,6 +26,7 @@ const TokenExplorer = () => {
           token.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
           token.mint.toLowerCase().includes(searchQuery.toLowerCase())
       );
+
       setFilteredTokens(filtered);
     } else {
       setFilteredTokens(tokens);
@@ -34,8 +37,17 @@ const TokenExplorer = () => {
     try {
       setLoading(true);
       const response = await axios.get(`${API}/tokens`);
-      setTokens(response.data);
-      setFilteredTokens(response.data);
+
+      const myTokens = publicKey
+        ? response.data.filter(
+            (token) =>
+              token.creator === publicKey.toBase58() &&
+              token.mint &&
+              token.ata
+        )
+      : [];
+      setTokens(myTokens);
+      setFilteredTokens(myTokens);
     } catch (error) {
       console.error('Error fetching tokens:', error);
     } finally {
@@ -62,7 +74,7 @@ const TokenExplorer = () => {
           Token Explorer
         </h1>
         <p className="text-lg text-zinc-700 mb-6">
-          Browse all tokens created on the launchpad
+          View tokens created by your connected wallet
         </p>
 
         <div className="relative max-w-md">
@@ -80,8 +92,13 @@ const TokenExplorer = () => {
           />
         </div>
       </div>
-
-      {loading ? (
+      {!publicKey ? (
+        <div className="bg-white border border-zinc-300 p-12 text-center">
+          <p className="text-zinc-600">
+            Connect your wallet to view your created tokens.
+          </p>
+        </div>
+      ) : loading ? (
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-300 border-t-black mx-auto mb-4" />
@@ -91,7 +108,11 @@ const TokenExplorer = () => {
       ) : filteredTokens.length === 0 ? (
         <div className="bg-white border border-zinc-300 p-12 text-center">
           <p className="text-zinc-600">
-            {searchQuery ? 'No tokens found matching your search' : 'No tokens created yet'}
+            {
+              searchQuery
+                ? 'No matching tokens found.'
+                : 'This wallet has not created any successful tokens yet.'
+            }
           </p>
         </div>
       ) : (
@@ -222,7 +243,7 @@ const TokenExplorer = () => {
 
       {!loading && filteredTokens.length > 0 && (
         <div className="mt-6 text-center text-sm text-zinc-600">
-          Showing {filteredTokens.length} of {tokens.length} tokens
+          Showing {filteredTokens.length} created token(s)
         </div>
       )}
     </div>
