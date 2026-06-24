@@ -1149,8 +1149,7 @@ async def get_my_tokens(wallet: str):
         logger.error(f"Error fetching my tokens: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
         
-        @api_router.get("/tokens/{mint}")
-        async def get_token(mint: str):
+       
 
 @api_router.post("/tokens/revoke-authority")
 @limiter.limit("5/minute")
