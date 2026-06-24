@@ -1362,6 +1362,16 @@ async def airdrop_balance(request: Request, mint: str, owner: str):
     }
 
 
+@api_router.get("/airdrop/fee")
+async def get_airdrop_fee():
+    return {
+        "wallet": os.getenv("PLATFORM_WALLET"),
+        "fee_per_recipient": float(
+            os.getenv("AIRDROP_FEE_SOL_PER_RECIPIENT", "0")
+        ),
+    }
+
+
 @api_router.post("/airdrop/build-batch")
 @limiter.limit("30/minute")
 async def airdrop_build_batch(request: Request, payload: AirdropBatchRequest):
