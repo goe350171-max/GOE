@@ -1089,6 +1089,30 @@ async def update_token_signature(mint: str, signature: str, verified: bool = Fal
             "token": updated_token
         }
     except Exception as e:
+    raise HTTPException(status_code=400, detail=str(e))
+
+
+@api_router.post("/tokens/update-status")
+async def update_token_status(
+    mint: str,
+    status: str,
+    error: str = "",
+):
+    try:
+        update_fields = {
+            "status": status,
+            "last_error": error,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        await db.tokens.update_one(
+            {"mint": mint},
+            {"$set": update_fields}
+        )
+
+        return {"success": True}
+
+    except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
