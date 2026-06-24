@@ -52,12 +52,21 @@ const Airdrop = () => {
   // Resolve effective mint based on source mode
   const effectiveMint = sourceMode === 'launchpad' ? selectedMint : manualMint.trim();
 
-  // Load launchpad tokens
-  useEffect(() => {
-    axios.get(`${API}/tokens`)
-      .then((res) => setLaunchpadTokens(res.data || []))
-      .catch(() => setLaunchpadTokens([]));
-  }, []);
+ // Load only the connected wallet's launchpad tokens
+useEffect(() => {
+  if (!connected || !publicKey) {
+    setLaunchpadTokens([]);
+    return;
+  }
+
+  axios.get(`${API}/my-tokens`, {
+    params: {
+      wallet: publicKey.toBase58(),
+    },
+  })
+    .then((res) => setLaunchpadTokens(res.data || []))
+    .catch(() => setLaunchpadTokens([]));
+}, [connected, publicKey]);
 
   // Fetch on-chain mint info whenever effectiveMint changes (debounced)
   useEffect(() => {
