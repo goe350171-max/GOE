@@ -32,6 +32,7 @@ const SafetyConfirmModal = ({
   actionLabel,
   walletAddress,
   breakdownLines = [],
+  platformFee = null,
   primaryActionText = 'Confirm & Sign',
 }) => {
   const { network, isMainnet, testMode } = useNetwork();
@@ -136,10 +137,12 @@ const SafetyConfirmModal = ({
 
              <div className="text-xs space-y-1.5 pt-1" data-testid="safety-breakdown">
 
-              <BreakdownRow
-                label="Platform fee"
-                value={`${formatSol(45_000_000)} SOL`}
-              />
+              {platformFee && (
+                <BreakdownRow
+                  label={platformFee.label}
+                  value={platformFee.value}
+                />
+              )}
 
               <BreakdownRow
                 label="Network fee"
