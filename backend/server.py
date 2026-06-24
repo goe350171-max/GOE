@@ -1173,8 +1173,7 @@ async def get_my_tokens(wallet: str):
     try:
         tokens = await db.tokens.find(
             {
-                "creator": wallet,
-                "status": "success"
+                "creator": wallet
             },
             {"_id": 0}
         ).sort("created_at", -1).to_list(100)
