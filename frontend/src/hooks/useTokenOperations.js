@@ -211,37 +211,37 @@ export const useTokenOperations = () => {
       const response = await axios.post(`${API}/tokens/create`, payload);
 
       const {
-      transaction: txData,
-      mintKeypair: mintKeypairData,
-      mint: backendMint,
-     ata,
-     totalMinted,
-     metadataUri,
-     metadataPda,
-     imageUri,
-   } = response.data;
+        transaction: txData,
+        mintKeypair: mintKeypairData,
+        mint: backendMint,
+        ata,
+        totalMinted,
+        metadataUri,
+        metadataPda,
+        imageUri,
+      } = response.data;
 
-  // Save it so the catch block can use it
-  mint = backendMint;
+      // Save it so the catch block can use it
+      mint = backendMint;
 
-  diagPush('backend-build', 'ok', {
-    mint,
-    ata,
-    txDataLength: txData?.length,
-    metadataUriLen: metadataUri?.length,
-  });
+      diagPush('backend-build', 'ok', {
+        mint,
+        ata,
+        txDataLength: txData?.length,
+        metadataUriLen: metadataUri?.length,
+      });
 
-  dbg('1/9 backend response:', {
-    mint,
-    ata,
-    metadataPda,
-    metadataUri,
-    imageUri,
-    totalMinted,
-    txDataLength: txData?.length,
-  });
+      dbg('1/9 backend response:', {
+        mint,
+        ata,
+        metadataPda,
+        metadataUri,
+        imageUri,
+        totalMinted,
+        txDataLength: txData?.length,
+      });
 
-  toast.dismiss('tx-build');
+      toast.dismiss('tx-build');
 
       // ── 2. Deserialize + REFRESH blockhash from frontend connection ──
       diagPush('deserialize', 'start');
