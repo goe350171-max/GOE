@@ -1065,6 +1065,7 @@ async def update_token_signature(mint: str, signature: str, verified: bool = Fal
             "transaction_signature": signature,
             "on_chain_verified": verified,
             "on_chain_supply": on_chain_supply,
+            "status": "success" if verified else "failed",
         }
         await db.tokens.update_one(
             {"mint": mint},
