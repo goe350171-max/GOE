@@ -543,10 +543,27 @@ useEffect(() => {
         actionLabel={`Airdrop · ${parsed.valid.length} recipients · ${batches.length} tx`}
         walletAddress={publicKey?.toBase58() || ''}
         breakdownLines={[
-          { label: 'Token', value: `${mintInfo?.decimals ?? '—'}-decimal SPL` },
-          { label: 'Recipients', value: String(parsed.valid.length) },
-          { label: 'Total tokens', value: totalAmount.toLocaleString(undefined, { maximumFractionDigits: 6 }) },
-          { label: 'Batches', value: `${batches.length} (×${BATCH_SIZE} max)` },
+          {
+            label: "Platform fee",
+            value: `${platformFeeSol.toFixed(6)} SOL`,
+          },
+
+          {
+            label: "Recipients",
+            value: String(parsed.valid.length),
+          },
+
+          {
+            label: "Total tokens",
+            value: totalAmount.toLocaleString(undefined, {
+              maximumFractionDigits: 6,
+            }),
+          },
+
+          {
+            label: "Batches",
+            value: `${batches.length} (×${BATCH_SIZE} max)`,
+          },
         ]}
         primaryActionText={`Confirm & sign ${batches.length} tx`}
         onCancel={() => setSafetyModal({ open: false, loadingSimulation: false, simulation: null })}
