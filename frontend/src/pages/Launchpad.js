@@ -193,34 +193,42 @@ const TokenCreationForm = () => {
       finalImageUri = uploaded;
     }
 
-    const result = await createToken({
-      metadata: {
-        name: formData.name,
-        symbol: formData.symbol,
-        decimals: parseInt(formData.decimals),
-        total_supply: parseInt(formData.totalSupply),
-        description: formData.description,
-        image: finalImageUri,
-        logo: finalImageUri,
-        twitter: formData.twitter,
-        telegram: formData.telegram,
-        website: formData.website
-      },
-      revokeMintAuthority: authorities.revokeMint,
-      revokeFreezeAuthority: authorities.revokeFreeze,
-      revokeUpdateAuthority: authorities.revokeUpdate
-    }, {
-      confirmBeforeSign: ({ simulation }) => new Promise((resolve) => {
-        setSafetyModal({
-          open: true,
-          loadingSimulation: false,
-          simulation,
-          resolve,
-        });
-      }),
-    });
+    let result;
 
-    if (result?.success) {
+    try {
+      result = await createToken({
+        metadata: {
+          name: formData.name,
+          symbol: formData.symbol,
+          decimals: parseInt(formData.decimals),
+          total_supply: parseInt(formData.totalSupply),
+          description: formData.description,
+          image: finalImageUri,
+          logo: finalImageUri,
+          twitter: formData.twitter,
+          telegram: formData.telegram,
+          website: formData.website
+        },
+        revokeMintAuthority: authorities.revokeMint,
+        revokeFreezeAuthority: authorities.revokeFreeze,
+        revokeUpdateAuthority: authorities.revokeUpdate
+      }, {
+        confirmBeforeSign: ({ simulation }) =>
+          new Promise((resolve) => {
+            setSafetyModal({
+              open: true,
+              loadingSimulation: false,
+              simulation,
+              resolve,
+            });
+          }),
+     });
+   } catch (err) {
+     console.error(err);
+     return;
+   }
+
+   if (result?.success) {
       // Show success modal with all the data
       setSuccessData({
         mint: result.mint,
