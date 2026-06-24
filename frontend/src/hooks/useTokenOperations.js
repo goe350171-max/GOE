@@ -228,9 +228,6 @@ export const useTokenOperations = () => {
 
       mint = responseMint;
 
-      // Save it so the catch block can use it
-      mint = backendMint;
-
       diagPush('backend-build', 'ok', {
         mint,
         ata,
