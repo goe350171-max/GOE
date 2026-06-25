@@ -107,11 +107,20 @@ def dbg_create(stage: str, **data):
         safe[k] = sv
     logger.info("[token-create:%s] %s", stage, safe)
 
-TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
-SYSTEM_PROGRAM_ID = Pubkey.from_string("11111111111111111111111111111111")
-RENT_PROGRAM_ID = Pubkey.from_string("SysvarRent111111111111111111111111111111111")
-ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
-TOKEN_METADATA_PROGRAM_ID = Pubkey.from_string("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
+from spl.token.constants import TOKEN_PROGRAM_ID
+from spl.token.constants import ASSOCIATED_TOKEN_PROGRAM_ID
+
+SYSTEM_PROGRAM_ID = Pubkey.from_string(
+    "11111111111111111111111111111111"
+)
+
+RENT_PROGRAM_ID = Pubkey.from_string(
+    "SysvarRent111111111111111111111111111111111"
+)
+
+TOKEN_METADATA_PROGRAM_ID = Pubkey.from_string(
+    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+)
 
 SOLANA_RPC_URL = os.environ.get('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
 SOLANA_RPC_FALLBACKS = [
