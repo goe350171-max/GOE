@@ -107,7 +107,6 @@ def dbg_create(stage: str, **data):
         safe[k] = sv
     logger.info("[token-create:%s] %s", stage, safe)
 
-from spl.token.constants import TOKEN_PROGRAM_ID
 from spl.token.constants import ASSOCIATED_TOKEN_PROGRAM_ID
 
 SYSTEM_PROGRAM_ID = Pubkey.from_string(
