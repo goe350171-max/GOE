@@ -1481,9 +1481,9 @@ async def rpc_get_parsed_account(account: str):
     raise HTTPException(status_code=503, detail=f"RPC unavailable: {last_error}")
 
 async def rpc_get_minimum_balance_for_rent_exemption(size: int):
-    """Get rent exemption using RPC with failover."""
-   async def rpc_get_minimum_balance_for_rent_exemption(size: int):
-    """Get rent exemption using RPC with failover."""
+    """
+    Get the minimum lamports required for rent exemption.
+    """
 
     result = await rpc_request(
         "getMinimumBalanceForRentExemption",
