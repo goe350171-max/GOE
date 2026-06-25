@@ -417,6 +417,127 @@ async def get_latest_blockhash():
 
     raise HTTPException(status_code=503, detail=f"All RPC endpoints failed. Last error: {last_error}")
 
+async def get_transaction(signature: str):
+    """
+    Fetch a confirmed transaction from Solana RPC.
+    Tries every configured RPC endpoint.
+    """
+
+    last_error = None
+
+    for rpc_url in SOLANA_RPC_FALLBACKS:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    rpc_url,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "getTransaction",
+                        "params": [
+                            signature,
+                            {
+                                "encoding": "jsonParsed",
+                                "maxSupportedTransactionVersion": 0,
+                            },
+                        ],
+                    },
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=20),
+                ) as resp:
+
+                    if resp.status != 200:
+                        continue
+
+                    data = await resp.json()
+
+                    if data.get("result"):
+                        return data["result"]
+
+                    last_error = data.get("error")
+
+        except Exception as e:
+            last_error = str(e)
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Unable to verify payment transaction ({last_error})",
+    )
+
+async def verify_airdrop_fee_payment(
+    payer: str,
+    signature: str,
+    recipient_count: int,
+):
+    """
+    Verify that the platform fee payment was actually made.
+    """
+
+    tx = await get_transaction(signature)
+
+    if tx.get("meta", {}).get("err") is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Platform fee transaction failed.",
+        )
+
+    account_keys = tx["transaction"]["message"]["accountKeys"]
+
+    signer = None
+
+    for account in account_keys:
+        if account.get("signer"):
+            signer = account["pubkey"]
+            break
+
+    if signer != payer:
+        raise HTTPException(
+            status_code=400,
+            detail="Platform fee payer does not match wallet.",
+        )
+
+    expected_wallet = os.getenv("PLATFORM_WALLET")
+
+    expected_fee = (
+        float(os.getenv("AIRDROP_FEE_SOL_PER_RECIPIENT", "0"))
+        * recipient_count
+    )
+
+    expected_lamports = int(expected_fee * 1_000_000_000)
+
+    found = False
+
+    for instruction in tx["transaction"]["message"]["instructions"]:
+
+        if instruction.get("program") != "system":
+            continue
+
+        parsed = instruction.get("parsed")
+
+        if not parsed:
+            continue
+
+        if parsed.get("type") != "transfer":
+            continue
+
+        info = parsed["info"]
+
+        if (
+            info["source"] == payer
+            and info["destination"] == expected_wallet
+            and int(info["lamports"]) >= expected_lamports
+        ):
+            found = True
+            break
+
+    if not found:
+        raise HTTPException(
+            status_code=400,
+            detail="Platform fee payment not found or incorrect.",
+        )
+
+    return True
+
 
 async def pin_with_retry(upload_fn, *args, max_retries=3, delay=2):
     """Retry wrapper for Pinata IPFS uploads."""
@@ -1228,8 +1349,15 @@ async def get_my_tokens(wallet: str):
 @limiter.limit("5/minute")
 async def revoke_authority(request: Request, payload: AuthorityRevocationRequest):
     try:
-        payer_pubkey = Pubkey.from_string(payload.payer)
-        mint_pubkey = Pubkey.from_string(payload.mint)
+    payer_pk = Pubkey.from_string(payload.payer)
+    mint_pk = Pubkey.from_string(payload.mint)
+
+    # Verify platform fee payment before building the transaction
+    await verify_airdrop_fee_payment(
+        payer=payload.payer,
+        signature=payload.fee_signature,
+        recipient_count=len(payload.recipients),
+    )
         
         recent_blockhash = await get_latest_blockhash()
         
