@@ -54,25 +54,42 @@ export function useAirdropOperations() {
     return res.data;
   }, []);
 
-  const buildBatch = useCallback(async ({ mint, decimals, recipients }) => {
-    const res = await axios.post(`${API}/airdrop/build-batch`, {
-      mint,
-      payer: publicKey.toBase58(),
-      decimals,
-      recipients,
-    });
-    return res.data;
-  }, [publicKey]);
+  const buildBatch = useCallback(async ({
+  mint,
+  decimals,
+  recipients,
+  feeSignature,
+}) => {
+  const res = await axios.post(`${API}/airdrop/build-batch`, {
+    mint,
+    payer: publicKey.toBase58(),
+    decimals,
+    recipients,
+    fee_signature: feeSignature,
+  });
+
+  return res.data;
+}, [publicKey]);
 
   /**
    * Simulate the FIRST batch (representative) and project total cost.
    * Called from the UI BEFORE confirmation modal opens.
    */
-  const previewAirdrop = useCallback(async ({ mint, decimals, batches }) => {
+  const previewAirdrop = useCallback(async ({
+    mint,
+    decimals,
+    batches,
+    feeSignature,
+  }) => {
     if (!publicKey) throw new Error('Wallet not connected');
     if (!batches?.length) throw new Error('No batches to preview');
 
-    const built = await buildBatch({ mint, decimals, recipients: batches[0] });
+    const built = await buildBatch({
+      mint,
+      decimals,
+      recipients: batches[0],
+      feeSignature,
+    });
     const txBuffer = Buffer.from(built.transaction, 'base64');
     const transaction = Transaction.from(txBuffer);
 
@@ -134,6 +151,7 @@ export function useAirdropOperations() {
     mint,
     decimals,
     batches,
+    feeSignature,
     onProgress = () => {},
   }) => {
     if (!publicKey || !signTransaction) {
@@ -202,7 +220,12 @@ export function useAirdropOperations() {
           });
 
           try {
-            const built = await buildBatch({ mint, decimals, recipients });
+            const built = await buildBatch({
+              mint,
+              decimals,
+              recipients,
+              feeSignature,
+            });
             const txBuffer = Buffer.from(built.transaction, 'base64');
             const transaction = Transaction.from(txBuffer);
 
