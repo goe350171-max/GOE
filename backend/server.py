@@ -469,46 +469,25 @@ async def get_transaction(signature: str):
     Tries every configured RPC endpoint.
     """
 
-    last_error = None
+    try:
+        result = await rpc_request(
+            "getTransaction",
+            [
+                signature,
+                {
+                    "encoding": "jsonParsed",
+                    "maxSupportedTransactionVersion": 0,
+                },
+            ],
+        )
 
-    for rpc_url in SOLANA_RPC_FALLBACKS:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    rpc_url,
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "getTransaction",
-                        "params": [
-                            signature,
-                            {
-                                "encoding": "jsonParsed",
-                                "maxSupportedTransactionVersion": 0,
-                            },
-                        ],
-                    },
-                    headers={"Content-Type": "application/json"},
-                    timeout=aiohttp.ClientTimeout(total=20),
-                ) as resp:
+        return result
 
-                    if resp.status != 200:
-                        continue
-
-                    data = await resp.json()
-
-                    if data.get("result"):
-                        return data["result"]
-
-                    last_error = data.get("error")
-
-        except Exception as e:
-            last_error = str(e)
-
-    raise HTTPException(
-        status_code=400,
-        detail=f"Unable to verify payment transaction ({last_error})",
-    )
+    except HTTPException:
+        raise HTTPException(
+            status_code=400,
+            detail="Unable to verify payment transaction.",
+        )
 
 async def verify_airdrop_fee_payment(
     payer: str,
