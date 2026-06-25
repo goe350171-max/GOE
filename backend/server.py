@@ -121,12 +121,68 @@ TOKEN_METADATA_PROGRAM_ID = Pubkey.from_string(
 )
 
 SOLANA_RPC_URL = os.environ.get('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+SOLANA_RPC_URL = os.environ.get(
+    "SOLANA_RPC_URL",
+    "https://api.mainnet-beta.solana.com",
+)
+
 SOLANA_RPC_FALLBACKS = [
     SOLANA_RPC_URL,
-    'https://api.mainnet-beta.solana.com',
+    "https://api.mainnet-beta.solana.com",
 ]
-# Deduplicate while preserving order
+# Remove duplicates while preserving order
 SOLANA_RPC_FALLBACKS = list(dict.fromkeys(SOLANA_RPC_FALLBACKS))
+
+
+async def rpc_request(method: str, params: list):
+    last_error = None
+
+    for rpc_url in SOLANA_RPC_FALLBACKS:
+
+        logger.info(f"[RPC] Trying {method} -> {rpc_url}")
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    rpc_url,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": method,
+                        "params": params,
+                    },
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+
+                    if resp.status != 200:
+                        last_error = f"{rpc_url} HTTP {resp.status}"
+                        logger.warning(last_error)
+                        continue
+
+                    data = await resp.json()
+
+                    if "error" in data:
+                        last_error = str(data["error"])
+                        logger.warning(last_error)
+                        continue
+
+                    if "result" not in data:
+                        last_error = "RPC returned no result"
+                        logger.warning(last_error)
+                        continue
+
+                    return data["result"]
+
+        except Exception as e:
+            last_error = str(e)
+            logger.warning(last_error)
+
+    raise HTTPException(
+        status_code=503,
+        detail=f"All RPC endpoints failed: {last_error}",
+    )
+
 
 # Log RPC connection at startup (mask API key for security)
 rpc_display = SOLANA_RPC_URL.split('api-key=')[0] + 'api-key=***' if 'api-key=' in SOLANA_RPC_URL else SOLANA_RPC_URL
@@ -390,39 +446,22 @@ class TokenRecord(BaseModel):
     on_chain_supply: Optional[str] = None
 
 async def get_latest_blockhash():
-    """Get latest blockhash with RPC failover. Tries each endpoint in order."""
-    last_error = None
-    for rpc_url in SOLANA_RPC_FALLBACKS:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    rpc_url,
-                    json={"jsonrpc": "2.0", "id": 1, "method": "getLatestBlockhash", "params": [{"commitment": "finalized"}]},
-                    headers={"Content-Type": "application/json"},
-                    timeout=aiohttp.ClientTimeout(total=15)
-                ) as resp:
-                    if resp.status != 200:
-                        last_error = f"RPC {rpc_url[:40]}... returned {resp.status}"
-                        logger.warning(last_error)
-                        continue
+    """
+    Fetch the latest finalized blockhash using the shared RPC helper.
+    """
 
-                    data = await resp.json()
-                    if 'result' in data and 'value' in data['result']:
-                        blockhash_str = data['result']['value']['blockhash']
-                        return Hash.from_string(blockhash_str)
+    result = await rpc_request(
+        "getLatestBlockhash",
+        [
+            {
+                "commitment": "finalized"
+            }
+        ]
+    )
 
-                    if 'error' in data:
-                        last_error = f"RPC error: {data['error']}"
-                        logger.warning(last_error)
-                        continue
-        except asyncio.TimeoutError:
-            last_error = f"RPC {rpc_url[:40]}... timed out"
-            logger.warning(last_error)
-        except Exception as e:
-            last_error = str(e)
-            logger.warning(f"RPC {rpc_url[:40]}... failed: {last_error}")
-
-    raise HTTPException(status_code=503, detail=f"All RPC endpoints failed. Last error: {last_error}")
+    return Hash.from_string(
+        result["value"]["blockhash"]
+    )
 
 async def get_transaction(signature: str):
     """
@@ -1443,44 +1482,15 @@ async def rpc_get_parsed_account(account: str):
 
 async def rpc_get_minimum_balance_for_rent_exemption(size: int):
     """Get rent exemption using RPC with failover."""
-    last_error = None
+   async def rpc_get_minimum_balance_for_rent_exemption(size: int):
+    """Get rent exemption using RPC with failover."""
 
-    for rpc_url in SOLANA_RPC_FALLBACKS:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    rpc_url,
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "getMinimumBalanceForRentExemption",
-                        "params": [size],
-                    },
-                    headers={"Content-Type": "application/json"},
-                    timeout=aiohttp.ClientTimeout(total=15),
-                ) as resp:
-
-                    if resp.status != 200:
-                        last_error = f"HTTP {resp.status}"
-                        continue
-
-                    data = await resp.json()
-
-                    if "error" in data:
-                        last_error = data["error"]
-                        continue
-
-                    return int(data["result"])
-
-        except Exception as e:
-            last_error = str(e)
-            continue
-
-    raise HTTPException(
-        status_code=503,
-        detail=f"RPC unavailable: {last_error}",
+    result = await rpc_request(
+        "getMinimumBalanceForRentExemption",
+        [size],
     )
 
+    return int(result)
 
 @api_router.get("/airdrop/mint-info/{mint}")
 @limiter.limit("30/minute")
