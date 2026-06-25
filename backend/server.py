@@ -909,7 +909,12 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         
         # --- Instruction 1: Create mint account ---
         MINT_SIZE = 82
-        lamports_for_mint = 1461600
+
+        lamports_for_mint = await rpc_get_minimum_balance_for_rent_exemption(MINT_SIZE)
+
+        logger.info(
+            f"Mint rent exemption: {lamports_for_mint} lamports"
+        )
         
         create_account_ix = create_account(
             CreateAccountParams(
@@ -1435,6 +1440,46 @@ async def rpc_get_parsed_account(account: str):
             last_error = str(e)
             continue
     raise HTTPException(status_code=503, detail=f"RPC unavailable: {last_error}")
+
+async def rpc_get_minimum_balance_for_rent_exemption(size: int):
+    """Get rent exemption using RPC with failover."""
+    last_error = None
+
+    for rpc_url in SOLANA_RPC_FALLBACKS:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    rpc_url,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "getMinimumBalanceForRentExemption",
+                        "params": [size],
+                    },
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+
+                    if resp.status != 200:
+                        last_error = f"HTTP {resp.status}"
+                        continue
+
+                    data = await resp.json()
+
+                    if "error" in data:
+                        last_error = data["error"]
+                        continue
+
+                    return int(data["result"])
+
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+    raise HTTPException(
+        status_code=503,
+        detail=f"RPC unavailable: {last_error}",
+    )
 
 
 @api_router.get("/airdrop/mint-info/{mint}")
