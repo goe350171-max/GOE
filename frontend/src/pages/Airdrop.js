@@ -67,7 +67,6 @@ const [progress, setProgress] = useState(null);
 
 const [batchResults, setBatchResults] = useState([]);
 
-const [feeSignature, setFeeSignature] = useState("");
 
 // Airdrop platform fee configuration
 const [feeInfo, setFeeInfo] = useState(null);
@@ -252,7 +251,7 @@ useEffect(() => {
         "confirmed"
       );
 
-      setFeeSignature(feeSignature);
+    
     } catch (err) {
       toast.error("Platform fee payment failed.");
       return;
