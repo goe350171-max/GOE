@@ -1,7 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useWallet } from '@solana/wallet-adapter-react';
+import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import axios from 'axios';
+import {
+  Transaction,
+  SystemProgram,
+  PublicKey,
+  LAMPORTS_PER_SOL,
+} from '@solana/web3.js';
 import { toast } from 'sonner';
 import {
   PaperPlaneTilt, Warning, UploadSimple, CheckCircle, XCircle,
@@ -24,7 +30,13 @@ const BATCH_SIZE = 5; // Recipients per tx (safe under 1232-byte cap)
 const FEE_PER_BATCH_SOL = 0.000005; // Rough estimate (5000 lamports base fee)
 
 const Airdrop = () => {
-  const { connected, publicKey } = useWallet();
+  const { connection } = useConnection();
+
+  const {
+    connected,
+    publicKey,
+    signTransaction,
+  } = useWallet();
   const { fetchMintInfo, fetchBalance, executeAirdrop, running } = useAirdropOperations();
   const csvInputRef = useRef(null);
 
@@ -54,6 +66,8 @@ const [safetyModal, setSafetyModal] = useState({
 const [progress, setProgress] = useState(null);
 
 const [batchResults, setBatchResults] = useState([]);
+
+const [feeSignature, setFeeSignature] = useState("");
 
 // Airdrop platform fee configuration
 const [feeInfo, setFeeInfo] = useState(null);
@@ -177,6 +191,7 @@ useEffect(() => {
         mint: effectiveMint,
         decimals: mintInfo.decimals,
         batches,
+        feeSignature,
       });
       setSafetyModal({
         open: true,
@@ -193,18 +208,66 @@ useEffect(() => {
   };
 
   const handleExecute = async () => {
-    setSafetyModal({ open: false, loadingSimulation: false, simulation: null });
-    setBatchResults([]);
-    toast.loading(`Starting airdrop: ${batches.length} batch${batches.length > 1 ? 'es' : ''}…`, { id: 'airdrop-run' });
+    setSafetyModal({
+    open: false,
+    loadingSimulation: false,
+    simulation: null,
+  });
 
-    const { results = [] } = await executeAirdrop({
-      mint: effectiveMint,
-      decimals: mintInfo.decimals,
-      batches,
-      onProgress: (p) => setProgress(p),
-    });
+  setBatchResults([]);
 
-    setBatchResults(results);
+  toast.loading(
+    `Starting airdrop: ${batches.length} batch${batches.length > 1 ? "es" : ""}…`,
+    { id: "airdrop-run" }
+  );
+
+  // ---------------------------------------------------
+  // Pay platform fee FIRST
+  // ---------------------------------------------------
+  let feeSignature = "";
+
+  if (platformFeeSol > 0) {
+    try {
+      const feeTx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: publicKey,
+          toPubkey: new PublicKey(feeInfo.wallet),
+          lamports: Math.round(platformFeeSol * LAMPORTS_PER_SOL),
+        })
+      );
+
+      const { blockhash } = await connection.getLatestBlockhash();
+
+      feeTx.recentBlockhash = blockhash;
+      feeTx.feePayer = publicKey;
+
+      const signedTx = await signTransaction(feeTx);
+
+      feeSignature = await connection.sendRawTransaction(
+        signedTx.serialize()
+      );
+
+      await connection.confirmTransaction(
+        feeSignature,
+        "confirmed"
+      );
+
+      setFeeSignature(feeSignature);
+    } catch (err) {
+      toast.error("Platform fee payment failed.");
+      return;
+    }
+  }
+
+  const { results = [] } = await executeAirdrop({
+    mint: effectiveMint,
+    decimals: mintInfo.decimals,
+    batches,
+    feeSignature,
+    onProgress: (p) => setProgress(p),
+  });
+
+  setBatchResults(results);
     toast.dismiss('airdrop-run');
 
     const successful = results.filter((r) => r.success).length;
