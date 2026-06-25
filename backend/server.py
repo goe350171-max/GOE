@@ -1453,33 +1453,18 @@ async def revoke_authority(request: Request, payload: AuthorityRevocationRequest
 
 async def rpc_get_parsed_account(account: str):
     """Call getAccountInfo with jsonParsed encoding using failover."""
-    last_error = None
-    for rpc_url in SOLANA_RPC_FALLBACKS:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    rpc_url,
-                    json={
-                        "jsonrpc": "2.0", "id": 1,
-                        "method": "getAccountInfo",
-                        "params": [account, {"encoding": "jsonParsed", "commitment": "confirmed"}],
-                    },
-                    headers={"Content-Type": "application/json"},
-                    timeout=aiohttp.ClientTimeout(total=15),
-                ) as resp:
-                    if resp.status != 200:
-                        last_error = f"HTTP {resp.status}"
-                        continue
-                    data = await resp.json()
-                    if 'error' in data:
-                        last_error = data['error']
-                        continue
-                    return data.get('result', {}).get('value')
-        except Exception as e:
-            last_error = str(e)
-            continue
-    raise HTTPException(status_code=503, detail=f"RPC unavailable: {last_error}")
+    result = await rpc_request(
+        "getAccountInfo",
+        [
+            account,
+            {
+                "encoding": "jsonParsed",
+                "commitment": "confirmed",
+            },
+        ],
+    )
 
+    return result.get("value")
 async def rpc_get_minimum_balance_for_rent_exemption(size: int):
     """
     Get the minimum lamports required for rent exemption.
