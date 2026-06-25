@@ -259,7 +259,7 @@ const TokenCreationForm = () => {
           Create Your Token
         </h1>
         <p className="text-lg text-zinc-700">
-          Launch your SPL token on Solana mainnet. No platform fees—only network costs.
+          Build, launch, and distribute SPL tokens on Solana with secure wallet-powered transactions.
         </p>
       </div>
 
