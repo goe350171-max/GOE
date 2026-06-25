@@ -1349,15 +1349,9 @@ async def get_my_tokens(wallet: str):
 @limiter.limit("5/minute")
 async def revoke_authority(request: Request, payload: AuthorityRevocationRequest):
     try:
-    payer_pk = Pubkey.from_string(payload.payer)
-    mint_pk = Pubkey.from_string(payload.mint)
+        payer_pk = Pubkey.from_string(payload.payer)
+        mint_pk = Pubkey.from_string(payload.mint)
 
-    # Verify platform fee payment before building the transaction
-    await verify_airdrop_fee_payment(
-        payer=payload.payer,
-        signature=payload.fee_signature,
-        recipient_count=len(payload.recipients),
-    )
         
         recent_blockhash = await get_latest_blockhash()
         
@@ -1512,6 +1506,13 @@ async def airdrop_build_batch(request: Request, payload: AirdropBatchRequest):
     try:
         payer_pk = Pubkey.from_string(payload.payer)
         mint_pk = Pubkey.from_string(payload.mint)
+
+        # Verify platform fee payment BEFORE building the batch
+        await verify_airdrop_fee_payment(
+            payer=payload.payer,
+            signature=payload.fee_signature,
+            recipient_count=len(payload.recipients),
+        )
 
         # Derive payer's source ATA
         source_ata = Pubkey.find_program_address(
