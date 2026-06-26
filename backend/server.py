@@ -285,13 +285,27 @@ async def pin_image_to_ipfs(image_url: str, token_name: str) -> str:
             data=form,
             timeout=aiohttp.ClientTimeout(total=60)
         ) as resp:
-            if resp.status != 200:
+
+            if resp.status not in (200, 201):
                 err_text = await resp.text()
-                logger.error(f"Pinata pinFile error: {err_text}")
-                raise HTTPException(status_code=503, detail=f"Pinata upload failed: {err_text}")
+                logger.error(f"Pinata pinFile error ({resp.status}): {err_text}")
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Pinata upload failed ({resp.status}): {err_text}"
+                )
+
             data = await resp.json()
-            ipfs_hash = data['IpfsHash']
-            logger.info(f"  Image pinned: ipfs://{ipfs_hash}")
+
+            ipfs_hash = data.get("IpfsHash")
+
+            if not ipfs_hash:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Pinata returned no IpfsHash."
+                )
+
+            logger.info(f"Image pinned successfully: ipfs://{ipfs_hash}")
+
             return f"ipfs://{ipfs_hash}"
 
 
@@ -308,7 +322,9 @@ async def pin_json_to_ipfs(metadata: dict, token_name: str) -> str:
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            "https://api.pinata.cloud/pinning/pinJSONToIPFS",
+             "https://api.pinata.cloud/pinning/pinJSONToIPFS",
+             timeout=aiohttp.ClientTimeout(total=30),
+            
             headers={
                 "Authorization": f"Bearer {PINATA_JWT}",
                 "Content-Type": "application/json"
