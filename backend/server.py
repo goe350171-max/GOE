@@ -1087,34 +1087,56 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             }.items() if v
         }
 
-        metadata_json = {
+        # ---------- Build FULL metadata ----------
+        full_metadata_json = {
             "name": payload.metadata.name,
             "symbol": payload.metadata.symbol,
             "description": payload.metadata.description or "",
             "image": image_ipfs_uri,
             "external_url": payload.metadata.website or "",
+            "attributes": [],
         }
 
-        # Only include optional metadata when it actually exists
         if social_links:
-            metadata_json["properties"] = {
+            full_metadata_json["properties"] = {
                 "links": social_links,
                 "category": "currency",
             }
-          
+
+        # ---------- Build MINIMAL metadata ----------
+        minimal_metadata_json = {
+            "name": payload.metadata.name,
+            "symbol": payload.metadata.symbol,
+            "image": image_ipfs_uri,
+        }
+
+        # Start by assuming we will use the full version
+        metadata_json = full_metadata_json
 
         try:
             metadata_uri = await pin_with_retry(
-                pin_json_to_ipfs, metadata_json, payload.metadata.name
+                pin_json_to_ipfs,
+                metadata_json,
+                payload.metadata.name,
             )
-        except Exception as json_err:
-            logger.warning(f"  Metadata IPFS upload failed after retries: {json_err}. Falling back to backend URI.")
-            backend_url = os.environ.get('BACKEND_PUBLIC_URL', '')
-            metadata_uri = f"{backend_url}/api/metadata/{mint_address_str}.json" if backend_url else ""
 
-        logger.info(f"  Metadata PDA: {metadata_pda}")
-        logger.info(f"  Image URI:    {image_ipfs_uri}")
-        logger.info(f"  Metadata URI: {metadata_uri}")
+        except Exception as json_err:
+            logger.warning(
+                f"Metadata upload failed after retries: {json_err}. "
+                "Falling back to backend metadata."
+            )
+
+            backend_url = os.environ.get("BACKEND_PUBLIC_URL", "")
+
+            metadata_uri = (
+                f"{backend_url}/api/metadata/{mint_address_str}.json"
+                if backend_url
+                else ""
+            )
+
+        logger.info(f"Metadata PDA: {metadata_pda}")
+        logger.info(f"Image URI: {image_ipfs_uri}")
+        logger.info(f"Metadata URI: {metadata_uri}")
         dbg_create('uris', image=image_ipfs_uri, metadata=metadata_uri,
                    metadata_pda=str(metadata_pda))
 
@@ -1126,7 +1148,21 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             )
             metadata_uri = metadata_uri[:200]
         
+        # ---------- FULL metadata instruction ----------
         create_metadata_ix = build_create_metadata_v3_ix(
+            metadata_pda=metadata_pda,
+            mint=mint_pubkey,
+            mint_authority=payer_pubkey,
+            payer=payer_pubkey,
+            update_authority=payer_pubkey,
+            name=payload.metadata.name,
+            symbol=payload.metadata.symbol,
+            uri=metadata_uri,
+            is_mutable=not payload.revoke_update_authority,
+        )
+
+        # ---------- MINIMAL metadata instruction ----------
+        minimal_metadata_ix = build_create_metadata_v3_ix(
             metadata_pda=metadata_pda,
             mint=mint_pubkey,
             mint_authority=payer_pubkey,
@@ -1221,24 +1257,60 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         if len(tx_serialized) > MAX_TX_SIZE:
 
             logger.warning(
-                "Transaction too large: %s bytes (limit %s)",
+                "Transaction is %s bytes. Retrying with minimal metadata.",
                 len(tx_serialized),
-                MAX_TX_SIZE,
             )
 
+            # Build a minimal metadata JSON
+            metadata_json = minimal_metadata_json
+
+            try:
+                metadata_uri = await pin_with_retry(
+                    pin_json_to_ipfs,
+                    metadata_json,
+                    payload.metadata.name,
+                )
+            except Exception:
+                # keep the previously generated URI if minimal upload fails
+                pass
+
+            create_metadata_ix = build_create_metadata_v3_ix(
+                metadata_pda=metadata_pda,
+                mint=mint_pubkey,
+                mint_authority=payer_pubkey,
+                payer=payer_pubkey,
+                update_authority=payer_pubkey,
+                name=payload.metadata.name,
+                symbol=payload.metadata.symbol,
+                uri=metadata_uri,
+                is_mutable=not payload.revoke_update_authority,
+            )
+
+            # Metadata instruction is still the 3rd instruction
+            instructions[2] = create_metadata_ix
+
+            msg = Message.new_with_blockhash(
+                instructions,
+                payer_pubkey,
+                recent_blockhash,
+            )
+
+            tx = SoldersTransaction.new_unsigned(msg)
+            tx_serialized = bytes(tx)
+
+        if len(tx_serialized) > MAX_TX_SIZE:
+
             logger.warning(
-                "Metadata lengths -> "
-                "name=%s symbol=%s uri=%s",
-                len(payload.metadata.name),
-                len(payload.metadata.symbol),
-                len(metadata_uri),
+                "Retry still produced %s bytes.",
+                len(tx_serialized),
             )
 
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Transaction is too large for Solana.\n"
-                    "Try shortening the token name, symbol, or metadata."
+                    f"Transaction is still {len(tx_serialized)} bytes "
+                    f"(limit {MAX_TX_SIZE}). "
+                    "Reduce metadata or remove optional fields."
                 ),
             )
 
