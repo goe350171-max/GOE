@@ -45,6 +45,29 @@ db = client[os.environ['DB_NAME']]
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI()
+# Shared HTTP session for all RPC calls
+http_session: aiohttp.ClientSession | None = None
+
+
+@app.on_event("startup")
+async def startup_http_session():
+    global http_session
+
+    http_session = aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=15)
+    )
+
+    logger.info("Shared HTTP session initialized")
+
+
+@app.on_event("shutdown")
+async def shutdown_http_session():
+    global http_session
+
+    if http_session:
+        await http_session.close()
+
+    logger.info("Shared HTTP session closed")
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
