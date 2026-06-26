@@ -1093,12 +1093,15 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             "description": payload.metadata.description or "",
             "image": image_ipfs_uri,
             "external_url": payload.metadata.website or "",
-            "attributes": [],
-            "properties": {
+        }
+
+        # Only include optional metadata when it actually exists
+        if social_links:
+            metadata_json["properties"] = {
                 "links": social_links,
                 "category": "currency",
-            },
-        }
+            }
+          }
 
         try:
             metadata_uri = await pin_with_retry(
