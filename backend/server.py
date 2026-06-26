@@ -331,13 +331,32 @@ async def pin_json_to_ipfs(metadata: dict, token_name: str) -> str:
             },
             json=payload
         ) as resp:
-            if resp.status != 200:
+            if resp.status not in (200, 201):
                 err_text = await resp.text()
-                logger.error(f"Pinata pinJSON error: {err_text}")
-                raise HTTPException(status_code=503, detail=f"Pinata JSON upload failed: {err_text}")
+
+                logger.error(
+                    f"Pinata pinJSON error ({resp.status}): {err_text}"
+                )
+ 
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Pinata JSON upload failed ({resp.status}): {err_text}",
+                )
+
             data = await resp.json()
-            ipfs_hash = data['IpfsHash']
-            logger.info(f"  Metadata pinned: ipfs://{ipfs_hash}")
+
+            ipfs_hash = data.get("IpfsHash")
+
+            if not ipfs_hash:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Pinata returned no IpfsHash.",
+                )
+
+            logger.info(
+                f"Metadata pinned successfully: ipfs://{ipfs_hash}"
+            )
+
             return f"ipfs://{ipfs_hash}"
 
 def _validate_pubkey(value: str, field_name: str = "address") -> str:
