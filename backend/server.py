@@ -924,6 +924,38 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         logger.info(f"  Raw amt: {mint_amount}")
         dbg_create('mint_params', mint=str(mint_pubkey), ata=str(ata_pubkey),
                    decimals=decimals, total_supply=total_supply, raw_amount=mint_amount)
+        # ----------------------------------------------------------
+        # Automatically shrink metadata if it is excessively large.
+        # This prevents the transaction from exceeding Solana's
+        # 1232-byte wire size.
+        # ----------------------------------------------------------
+
+        MAX_NAME = 32
+        MAX_SYMBOL = 10
+        MAX_DESCRIPTION = 200
+
+        if len(payload.metadata.name) > MAX_NAME:
+            logger.warning(
+                f"Name too long ({len(payload.metadata.name)}). Truncating."
+            )
+            payload.metadata.name = payload.metadata.name[:MAX_NAME]
+
+        if len(payload.metadata.symbol) > MAX_SYMBOL:
+            logger.warning(
+                f"Symbol too long ({len(payload.metadata.symbol)}). Truncating."
+            )
+            payload.metadata.symbol = payload.metadata.symbol[:MAX_SYMBOL]
+
+        if (
+            payload.metadata.description
+            and len(payload.metadata.description) > MAX_DESCRIPTION
+        ):
+            logger.warning(
+                f"Description too long ({len(payload.metadata.description)}). Truncating."
+            )
+            payload.metadata.description = (
+                payload.metadata.description[:MAX_DESCRIPTION]
+            )
         
         # --- Instruction 1: Create mint account ---
         MINT_SIZE = 82
@@ -1123,13 +1155,30 @@ async def create_token(request: Request, payload: TokenCreationRequest):
 
         mint_secret = bytes(mint_keypair)
 
-        # Defense in depth: enforce Solana wire-format 1232-byte cap before
-        # returning to the wallet (saves a guaranteed-to-fail signing prompt).
-        if len(tx_serialized) > 1232:
+        MAX_TX_SIZE = 1232
+
+        if len(tx_serialized) > MAX_TX_SIZE:
+
+            logger.warning(
+                "Transaction too large: %s bytes (limit %s)",
+                len(tx_serialized),
+                MAX_TX_SIZE,
+            )
+
+            logger.warning(
+                "Metadata lengths -> "
+                "name=%s symbol=%s uri=%s",
+                len(payload.metadata.name),
+                len(payload.metadata.symbol),
+                len(metadata_uri),
+            )
+
             raise HTTPException(
                 status_code=400,
-                detail=f"Built transaction is {len(tx_serialized)} bytes (>1232 cap). "
-                       f"Reduce metadata length (currently {len(payload.metadata.name)+len(payload.metadata.symbol)+len(metadata_uri)} bytes of strings)."
+                detail=(
+                    "Transaction is too large for Solana.\n"
+                    "Try shortening the token name, symbol, or metadata."
+                ),
             )
 
         mint_address = str(mint_pubkey)
