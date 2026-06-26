@@ -770,17 +770,22 @@ def build_create_ata_ix(
     )
 
 
-def build_mint_to_ix(mint: Pubkey, dest_ata: Pubkey, authority: Pubkey, amount: int) -> Instruction:
-    """Build MintTo instruction. Opcode 7, followed by u64 LE amount."""
-    data = bytes([7]) + amount.to_bytes(8, 'little')
-    return Instruction(
-        program_id=TOKEN_PROGRAM_ID,
-        accounts=[
-            AccountMeta(pubkey=mint, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=dest_ata, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=authority, is_signer=True, is_writable=False),
-        ],
-        data=data
+def build_mint_to_ix(
+    mint: Pubkey,
+    dest_ata: Pubkey,
+    authority: Pubkey,
+    amount: int,
+) -> Instruction:
+    """
+    Canonical SPL MintTo builder.
+    """
+    return mint_to(
+        TOKEN_PROGRAM_ID,
+        mint,
+        dest_ata,
+        authority,
+        amount,
+        [],
     )
 
 
