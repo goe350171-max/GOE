@@ -30,8 +30,6 @@ from solders.transaction import Transaction as SoldersTransaction
 from solders.message import Message
 from solders.instruction import Instruction, AccountMeta
 
-from spl.token.instructions import create_associated_token_account
-from spl.token.instructions import set_authority, AuthorityType
 
 from spl.token.instructions import (
     create_associated_token_account,
