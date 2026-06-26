@@ -1155,9 +1155,13 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             mint_authority=payer_pubkey,
             payer=payer_pubkey,
             update_authority=payer_pubkey,
-            name=payload.metadata.name,
-            symbol=payload.metadata.symbol,
+
+            # Use shorter on-chain fields on retry
+            name=payload.metadata.name[:20],
+            symbol=payload.metadata.symbol[:8],
+
             uri=metadata_uri,
+
             is_mutable=not payload.revoke_update_authority,
         )
 
@@ -1264,15 +1268,7 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             # Build a minimal metadata JSON
             metadata_json = minimal_metadata_json
 
-            try:
-                metadata_uri = await pin_with_retry(
-                    pin_json_to_ipfs,
-                    metadata_json,
-                    payload.metadata.name,
-                )
-            except Exception:
-                # keep the previously generated URI if minimal upload fails
-                pass
+        
 
             create_metadata_ix = build_create_metadata_v3_ix(
                 metadata_pda=metadata_pda,
