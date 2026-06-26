@@ -795,7 +795,7 @@ def build_set_authority_ix(
     Canonical SPL SetAuthority builder.
     """
 
-    mapping = {
+mapping = {
         0: AuthorityType.MINT_TOKENS,
         1: AuthorityType.FREEZE_ACCOUNT,
     }
