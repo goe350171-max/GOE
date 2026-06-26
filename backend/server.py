@@ -143,6 +143,17 @@ TOKEN_METADATA_PROGRAM_ID = Pubkey.from_string(
     "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 )
 
+TOKEN_PROGRAM_ID = Pubkey.from_string(
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+)
+
+TOKEN_2022_PROGRAM_ID = Pubkey.from_string(
+    "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+)
+
+ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string(
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+)
 SOLANA_RPC_URL = os.environ.get('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
 SOLANA_RPC_URL = os.environ.get(
     "SOLANA_RPC_URL",
