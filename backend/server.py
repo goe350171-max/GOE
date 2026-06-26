@@ -795,17 +795,17 @@ def build_set_authority_ix(
     Canonical SPL SetAuthority builder.
     """
 
-mapping = {
+    mapping = {
         0: AuthorityType.MINT_TOKENS,
         1: AuthorityType.FREEZE_ACCOUNT,
     }
 
-return set_authority(
-    account=account,
-    authority=current_authority,
-    authority_type=mapping[authority_type],
-    new_authority=new_authority,
-)
+    return set_authority(
+        account=account,
+        authority=current_authority,
+        authority_type=mapping[authority_type],
+        new_authority=new_authority,
+    )
 
 
 def build_create_ata_idempotent_ix(payer: Pubkey, ata: Pubkey, owner: Pubkey, mint: Pubkey) -> Instruction:
