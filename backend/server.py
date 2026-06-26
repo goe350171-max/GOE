@@ -31,6 +31,13 @@ from solders.message import Message
 from solders.instruction import Instruction, AccountMeta
 
 from spl.token.instructions import create_associated_token_account
+from spl.token.instructions import set_authority, AuthorityType
+
+from spl.token.instructions import (
+    create_associated_token_account,
+    set_authority,
+    AuthorityType,
+)
 
 import asyncio
 import aiohttp
@@ -778,22 +785,27 @@ def build_mint_to_ix(mint: Pubkey, dest_ata: Pubkey, authority: Pubkey, amount: 
     )
 
 
-def build_set_authority_ix(account: Pubkey, current_authority: Pubkey, authority_type: int, new_authority=None) -> Instruction:
-    """Build SetAuthority instruction. Opcode 6.
-    authority_type: 0=MintTokens, 1=FreezeAccount
-    new_authority: None to revoke
+def build_set_authority_ix(
+    account: Pubkey,
+    current_authority: Pubkey,
+    authority_type: int,
+    new_authority=None,
+) -> Instruction:
     """
-    if new_authority is None:
-        data = bytes([6]) + authority_type.to_bytes(1, 'little') + bytes([0])
-    else:
-        data = bytes([6]) + authority_type.to_bytes(1, 'little') + bytes([1]) + bytes(new_authority)
-    return Instruction(
+    Canonical SPL SetAuthority builder.
+    """
+
+    mapping = {
+        0: AuthorityType.MINT_TOKENS,
+        1: AuthorityType.FREEZE_ACCOUNT,
+    }
+
+    return set_authority(
         program_id=TOKEN_PROGRAM_ID,
-        accounts=[
-            AccountMeta(pubkey=account, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=current_authority, is_signer=True, is_writable=False),
-        ],
-        data=data
+        account=account,
+        authority=current_authority,
+        authority_type=mapping[authority_type],
+        new_authority=new_authority,
     )
 
 
