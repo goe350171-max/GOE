@@ -34,6 +34,7 @@ from solders.instruction import Instruction, AccountMeta
 from spl.token.instructions import (
     create_associated_token_account,
     set_authority,
+    mint_to,
     AuthorityType,
 )
 
