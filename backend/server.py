@@ -744,19 +744,23 @@ def derive_ata(owner: Pubkey, mint: Pubkey) -> Pubkey:
     raise Exception("Could not derive ATA")
 
 
-def build_create_ata_ix(payer: Pubkey, ata: Pubkey, owner: Pubkey, mint: Pubkey) -> Instruction:
-    """Build CreateAssociatedTokenAccount instruction."""
-    return Instruction(
-        program_id=ASSOCIATED_TOKEN_PROGRAM_ID,
-        accounts=[
-            AccountMeta(pubkey=payer, is_signer=True, is_writable=True),
-            AccountMeta(pubkey=ata, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=owner, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=Pubkey.from_string("11111111111111111111111111111111"), is_signer=False, is_writable=False),
-            AccountMeta(pubkey=TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
-        ],
-        data=bytes()
+def build_create_ata_ix(
+    payer: Pubkey,
+    ata: Pubkey,
+    owner: Pubkey,
+    mint: Pubkey,
+) -> Instruction:
+    """
+    Canonical SPL Associated Token Account instruction.
+
+    'ata' is kept only for compatibility with existing callers.
+    The official builder derives the ATA internally.
+    """
+
+    return create_associated_token_account(
+        payer=payer,
+        owner=owner,
+        mint=mint,
     )
 
 
