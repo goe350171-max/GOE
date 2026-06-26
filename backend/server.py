@@ -1101,7 +1101,7 @@ async def create_token(request: Request, payload: TokenCreationRequest):
                 "links": social_links,
                 "category": "currency",
             }
-          }
+          
 
         try:
             metadata_uri = await pin_with_retry(
