@@ -54,6 +54,16 @@ db = client[os.environ['DB_NAME']]
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI()
+@app.get("/debug/spl")
+async def debug_spl():
+    import spl.token.instructions as inst
+
+    return {
+        "module": str(inst.__file__),
+        "exports": sorted(
+            [x for x in dir(inst) if not x.startswith("_")]
+        ),
+    }
 # Shared HTTP session for all RPC calls
 http_session: aiohttp.ClientSession | None = None
 
