@@ -1100,8 +1100,17 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         # --- Instruction 3: Create Associated Token Account ---
         create_ata_ix = build_create_ata_ix(payer_pubkey, ata_pubkey, payer_pubkey, mint_pubkey)
         
-        # --- Instruction 4: MintTo (full supply → creator ATA) ---
-        mint_to_ix = build_mint_to_ix(mint_pubkey, ata_pubkey, payer_pubkey, mint_amount)
+       # --- Instruction 4: MintTo (full supply → creator ATA) ---
+       mint_to_ix = mint_to(
+           MintToParams(
+               program_id=TOKEN_PROGRAM_ID,
+               mint=mint_pubkey,
+               dest=ata_pubkey,
+               mint_authority=payer_pubkey,
+               amount=mint_amount,
+               signers=[],
+           )
+       )
         
         # --- Instruction 5: Create Metaplex Token Metadata ---
         metadata_pda = derive_metadata_pda(mint_pubkey)
