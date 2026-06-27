@@ -1223,9 +1223,6 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         instructions = [
             create_account_ix,
             initialize_mint_ix,
-            create_metadata_ix,
-            create_ata_ix,
-            mint_to_ix,
         ]
 
         # ─── Platform Fee Transfer ───────────────────────────────────────
