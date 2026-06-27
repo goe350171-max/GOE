@@ -37,8 +37,8 @@ from spl.token.instructions import (
     mint_to,
     AuthorityType,
     SetAuthorityParams,
+    MintToParams,
 )
-
 import asyncio
 import aiohttp
 import struct
