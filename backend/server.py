@@ -33,6 +33,7 @@ from solders.instruction import Instruction, AccountMeta
 
 from spl.token.instructions import (
     create_associated_token_account,
+    create_idempotent_associated_token_account,
     get_associated_token_address,
     set_authority,
     mint_to,
@@ -833,20 +834,21 @@ def build_set_authority_ix(
     )
 
 
-def build_create_ata_idempotent_ix(payer: Pubkey, ata: Pubkey, owner: Pubkey, mint: Pubkey) -> Instruction:
-    """Build CreateAssociatedTokenAccountIdempotent (data = [1]).
-    Will succeed silently if the ATA already exists."""
-    return Instruction(
-        program_id=ASSOCIATED_TOKEN_PROGRAM_ID,
-        accounts=[
-            AccountMeta(pubkey=payer, is_signer=True, is_writable=True),
-            AccountMeta(pubkey=ata, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=owner, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=SYSTEM_PROGRAM_ID, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
-        ],
-        data=bytes([1]),
+def build_create_ata_idempotent_ix(
+    payer: Pubkey,
+    ata: Pubkey,
+    owner: Pubkey,
+    mint: Pubkey,
+) -> Instruction:
+    """
+    Official SPL idempotent ATA builder.
+    'ata' is kept for compatibility but is derived internally.
+    """
+
+    return create_idempotent_associated_token_account(
+        payer=payer,
+        owner=owner,
+        mint=mint,
     )
 
 
