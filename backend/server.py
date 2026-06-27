@@ -1428,13 +1428,13 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         )
 
         return {
-            "transaction": base64.b64encode(tx_serialized).decode('utf-8'),
+            "transaction": base64.b64encode(tx_serialized).decode("utf-8"),
             "mint": mint_address,
             "ata": ata_address,
             "metadataPda": str(metadata_pda),
             "metadataUri": metadata_uri,
             "imageUri": image_ipfs_uri,
-            "mintKeypair": base64.b64encode(mint_secret).decode('utf-8'),
+            "mintKeypair": base64.b64encode(mint_secret).decode("utf-8"),
             "totalMinted": str(mint_amount),
 
             "platformFee": PLATFORM_FEE_SOL,
@@ -1444,9 +1444,30 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             "estimatedTotalCost": estimated_total_cost,
 
             "explorerUrl": f"https://explorer.solana.com/address/{mint_address}",
-            "message": "Transaction ready for signing"
+            "message": "Transaction ready for signing",
+
+            "instructionData": {
+                "payer": str(payer_pubkey),
+                "mint": mint_address,
+                "ata": ata_address,
+                "recentBlockhash": str(recent_blockhash),
+
+                "decimals": decimals,
+                "mintAmount": mint_amount,
+
+                "metadata": {
+                    "name": payload.metadata.name,
+                    "symbol": payload.metadata.symbol,
+                    "uri": metadata_uri,
+                },
+
+                "revokeMintAuthority": payload.revoke_mint_authority,
+                "revokeFreezeAuthority": payload.revoke_freeze_authority,
+                "revokeUpdateAuthority": payload.revoke_update_authority,
+
+                "platformFeeLamports": PLATFORM_FEE_LAMPORTS,
+            },
         }
-        
     except HTTPException:
         raise
     except Exception as e:
