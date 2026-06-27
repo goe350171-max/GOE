@@ -36,6 +36,7 @@ from spl.token.instructions import (
     set_authority,
     mint_to,
     AuthorityType,
+    SetAuthorityParams,
 )
 
 import asyncio
