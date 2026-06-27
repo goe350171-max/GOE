@@ -60,10 +60,10 @@ app = FastAPI()
 async def debug_spl():
     import inspect
 
-return {
-    "mint_to": str(inspect.signature(mint_to)),
-    "MintToParams": str(MintToParams),
-}
+    return {
+        "mint_to": str(inspect.signature(mint_to)),
+        "MintToParams": str(MintToParams),
+    }
 
 # Shared HTTP session for all RPC calls
 http_session: aiohttp.ClientSession | None = None
