@@ -1,6 +1,5 @@
 from solders.transaction import Transaction
 from solders.message import Message
-from solders.hash import Hash
 
 
 class TokenTransactionBuilder:
@@ -10,8 +9,14 @@ class TokenTransactionBuilder:
         self.recent_blockhash = recent_blockhash
         self.instructions = []
 
-    def add(self, instruction):
+    def add_instruction(self, instruction):
         self.instructions.append(instruction)
+
+    def add_instructions(self, instructions):
+        self.instructions.extend(instructions)
+
+    def instruction_count(self):
+        return len(self.instructions)
 
     def build(self):
         msg = Message.new_with_blockhash(
