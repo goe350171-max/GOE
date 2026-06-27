@@ -33,6 +33,7 @@ from solders.instruction import Instruction, AccountMeta
 
 from spl.token.instructions import (
     create_associated_token_account,
+    get_associated_token_address,
     set_authority,
     mint_to,
     initialize_mint,
@@ -41,7 +42,6 @@ from spl.token.instructions import (
     SetAuthorityParams,
     InitializeMintParams,
 )
-
 import asyncio
 import aiohttp
 import struct
@@ -1008,10 +1008,10 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         dbg_create('blockhash', value=str(recent_blockhash))
         
         # --- Derive ATA for creator ---
-        ata_pubkey = Pubkey.find_program_address(
-            [bytes(payer_pubkey), bytes(TOKEN_PROGRAM_ID), bytes(mint_pubkey)],
-            ASSOCIATED_TOKEN_PROGRAM_ID
-        )[0]
+        ata_pubkey = get_associated_token_address(
+            owner=payer_pubkey,
+            mint=mint_pubkey,
+        )
         
         logger.info(f"  Mint:    {mint_pubkey}")
         logger.info(f"  ATA:     {ata_pubkey}")
