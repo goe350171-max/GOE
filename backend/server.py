@@ -38,7 +38,7 @@ from spl.token.instructions import (
     AuthorityType,
     MintToParams,
 )
-)
+
 import asyncio
 import aiohttp
 import struct
