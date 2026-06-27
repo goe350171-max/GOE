@@ -1634,9 +1634,16 @@ async def revoke_authority(request: Request, payload: AuthorityRevocationRequest
         
         
         msg = Message.new_with_blockhash(
-            [set_authority_ix],
+            [
+                build_set_authority_ix(
+                    mint_pubkey,
+                    payer_pubkey,
+                    authority_type_map.get(payload.authority_type, 0),
+                    None,
+                )
+            ],
             payer_pubkey,
-            recent_blockhash
+            recent_blockhash,
         )
         
         tx = SoldersTransaction.new_unsigned(msg)
