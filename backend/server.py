@@ -35,9 +35,11 @@ from spl.token.instructions import (
     create_associated_token_account,
     set_authority,
     mint_to,
+    initialize_mint,
     AuthorityType,
     MintToParams,
     SetAuthorityParams,
+    InitializeMintParams,
 )
 
 import asyncio
@@ -1085,19 +1087,14 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         )
         
         # --- Instruction 2: Initialize mint ---
-        initialize_mint_data = bytes([0]) + \
-                               decimals.to_bytes(1, 'little') + \
-                               bytes(payer_pubkey) + \
-                               bytes([1]) + \
-                               bytes(payer_pubkey)
-        
-        initialize_mint_ix = Instruction(
-            program_id=TOKEN_PROGRAM_ID,
-            accounts=[
-                AccountMeta(pubkey=mint_pubkey, is_signer=False, is_writable=True),
-                AccountMeta(pubkey=RENT_PROGRAM_ID, is_signer=False, is_writable=False)
-            ],
-            data=initialize_mint_data
+        initialize_mint_ix = initialize_mint(
+            InitializeMintParams(
+                program_id=TOKEN_PROGRAM_ID,
+                mint=mint_pubkey,
+                decimals=decimals,
+                mint_authority=payer_pubkey,
+                freeze_authority=payer_pubkey,
+            )
         )
         
         # --- Instruction 3: Create Associated Token Account ---
