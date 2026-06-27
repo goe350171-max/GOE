@@ -37,10 +37,12 @@ from spl.token.instructions import (
     set_authority,
     mint_to,
     initialize_mint,
+    transfer_checked,
     AuthorityType,
     MintToParams,
     SetAuthorityParams,
     InitializeMintParams,
+    TransferCheckedParams,
 )
 import asyncio
 import aiohttp
@@ -856,19 +858,21 @@ def build_transfer_checked_ix(
     amount: int,
     decimals: int,
 ) -> Instruction:
-    """Build SPL Token TransferChecked instruction (opcode 12).
-    Layout: u8(12) + u64 LE amount + u8 decimals.
-    Verifies mint + decimals on-chain (safer than basic Transfer)."""
-    data = bytes([12]) + amount.to_bytes(8, 'little') + bytes([decimals])
-    return Instruction(
-        program_id=TOKEN_PROGRAM_ID,
-        accounts=[
-            AccountMeta(pubkey=source_ata, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=dest_ata, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=owner, is_signer=True, is_writable=False),
-        ],
-        data=data,
+    """
+    Official SPL TransferChecked builder.
+    """
+
+    return transfer_checked(
+        TransferCheckedParams(
+            program_id=TOKEN_PROGRAM_ID,
+            source=source_ata,
+            mint=mint,
+            dest=dest_ata,
+            owner=owner,
+            amount=amount,
+            decimals=decimals,
+            signers=[],
+        )
     )
 
 
