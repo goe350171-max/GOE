@@ -1632,20 +1632,6 @@ async def revoke_authority(request: Request, payload: AuthorityRevocationRequest
             "close": 3
         }
         
-        authority_type_byte = authority_type_map.get(payload.authority_type, 0)
-        
-        set_authority_data = bytes([6]) + \
-                            authority_type_byte.to_bytes(1, 'little') + \
-                            bytes([0])
-        
-        set_authority_ix = Instruction(
-            program_id=TOKEN_PROGRAM_ID,
-            accounts=[
-                AccountMeta(pubkey=mint_pubkey, is_signer=False, is_writable=True),
-                AccountMeta(pubkey=payer_pubkey, is_signer=True, is_writable=False)
-            ],
-            data=set_authority_data
-        )
         
         msg = Message.new_with_blockhash(
             [set_authority_ix],
