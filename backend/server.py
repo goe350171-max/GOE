@@ -815,15 +815,15 @@ def build_set_authority_ix(
         1: AuthorityType.FREEZE_ACCOUNT,
     }
 
-return set_authority(
-    SetAuthorityParams(
-        program_id=TOKEN_PROGRAM_ID,
-        account=account,
-        authority=mapping[authority_type],
-        current_authority=current_authority,
-        new_authority=new_authority,
+    return set_authority(
+        SetAuthorityParams(
+            program_id=TOKEN_PROGRAM_ID,
+            account=account,
+            authority=mapping[authority_type],
+            current_authority=current_authority,
+            new_authority=new_authority,
+        )
     )
-)
 
 
 def build_create_ata_idempotent_ix(payer: Pubkey, ata: Pubkey, owner: Pubkey, mint: Pubkey) -> Instruction:
