@@ -216,6 +216,7 @@ export const useTokenOperations = () => {
 
       const {
         transaction: txData,
+        instructionData,
         mintKeypair: mintKeypairData,
         mint: responseMint,
         ata,
