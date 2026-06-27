@@ -59,12 +59,11 @@ app = FastAPI()
 @app.get("/debug/spl")
 async def debug_spl():
     import inspect
-    import spl.token.instructions as inst
 
-    return {
-        "signature": str(inspect.signature(set_authority)),
-        "params": str(SetAuthorityParams),
-    }
+return {
+    "mint_to": str(inspect.signature(mint_to)),
+    "MintToParams": str(MintToParams),
+}
 
 # Shared HTTP session for all RPC calls
 http_session: aiohttp.ClientSession | None = None
