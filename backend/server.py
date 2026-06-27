@@ -784,28 +784,7 @@ def build_create_ata_ix(
         owner=owner,
         mint=mint,
     )
-
-
-def build_mint_to_ix(
-    mint: Pubkey,
-    dest_ata: Pubkey,
-    authority: Pubkey,
-    amount: int,
-) -> Instruction:
-    """
-    Official SPL MintTo builder.
-    """
-
-    return mint_to(
-        MintToParams(
-            program_id=TOKEN_PROGRAM_ID,
-            mint=mint,
-            dest=dest_ata,
-            mint_authority=authority,
-            amount=amount,
-            signers=[],
-        )
-    )
+    
 
 
 def build_set_authority_ix(
