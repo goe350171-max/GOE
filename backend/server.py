@@ -36,8 +36,8 @@ from spl.token.instructions import (
     set_authority,
     mint_to,
     AuthorityType,
-    SetAuthorityParams,
     MintToParams,
+)
 )
 import asyncio
 import aiohttp
@@ -787,15 +787,18 @@ def build_mint_to_ix(
     amount: int,
 ) -> Instruction:
     """
-    Canonical SPL MintTo builder.
+    Official SPL MintTo builder.
     """
+
     return mint_to(
-        TOKEN_PROGRAM_ID,
-        mint,
-        dest_ata,
-        authority,
-        amount,
-        [],
+        MintToParams(
+            program_id=TOKEN_PROGRAM_ID,
+            mint=mint,
+            dest=dest_ata,
+            mint_authority=authority,
+            amount=amount,
+            signers=[],
+        )
     )
 
 
