@@ -36,9 +36,13 @@ from spl.token.instructions import set_authority, AuthorityType
 from spl.token.instructions import (
     create_associated_token_account,
     set_authority,
+    mint_to,
+    initialize_mint,
     AuthorityType,
+    MintToParams,
+    SetAuthorityParams,
+    InitializeMintParams,
 )
-
 import asyncio
 import aiohttp
 import struct
