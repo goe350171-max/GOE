@@ -1334,15 +1334,9 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             )
 
             # Metadata instruction is still the 3rd instruction
-            instructions[2] = create_metadata_ix
+            builder.instructions[2] = create_metadata_ix
 
-            msg = Message.new_with_blockhash(
-                instructions,
-                payer_pubkey,
-                recent_blockhash,
-            )
-
-            tx = SoldersTransaction.new_unsigned(msg)
+            tx = builder.build()
             tx_serialized = bytes(tx)
 
         if len(tx_serialized) > MAX_TX_SIZE:
@@ -1406,7 +1400,7 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         await db.tokens.insert_one(doc)
         
         elapsed = round(time.time() - start_time, 2)
-        logger.info(f"  Transaction built: {len(instructions)} ix, {elapsed}s elapsed")
+        logger.info(f"  Transaction built: {len(builder.instructions)} ix, {elapsed}s elapsed")
         
         # Analytics event
         await db.analytics.insert_one({
@@ -1419,7 +1413,7 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             "ipfs_metadata": bool(metadata_uri.startswith("ipfs://")),
             "revoke_mint": payload.revoke_mint_authority,
             "revoke_freeze": payload.revoke_freeze_authority,
-            "instructions": len(instructions),
+            "instructions": len(builder.instructions),
             "elapsed_seconds": elapsed,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
