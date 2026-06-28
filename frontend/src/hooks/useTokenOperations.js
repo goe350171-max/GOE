@@ -3,10 +3,13 @@ import { Transaction, PublicKey, Keypair } from '@solana/web3.js';
 import axios from 'axios';
 import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
+
 import { useNetwork } from '../contexts/NetworkContext';
 import { useDiagnostics } from '../contexts/DiagnosticsContext';
+
 import { simulateTxCost, TX_ACTIONS } from '../utils/txSafety';
 import { extractErrorMessage } from '../utils/errors';
+import { buildTokenTransaction } from '../utils/buildTokenTransaction';
 
 const DEBUG = (process.env.REACT_APP_DEBUG_TOKEN_CREATE ?? 'true') !== 'false';
 const dbg = (label, ...args) => {
