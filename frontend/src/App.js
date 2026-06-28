@@ -1,19 +1,41 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+
 import { NetworkProvider } from './contexts/NetworkContext';
 import { DiagnosticsProvider } from './contexts/DiagnosticsContext';
 import { SolanaProvider } from './contexts/SolanaProvider';
+
 import { Toaster } from './components/ui/sonner';
 import ErrorBoundary from './components/ErrorBoundary';
 import MainnetWarningBanner from './components/MainnetWarningBanner';
 import DiagnosticsPanel from './components/DiagnosticsPanel';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
+
 import Launchpad from './pages/Launchpad';
 import Explorer from './pages/Explorer';
 import Airdrop from './pages/Airdrop';
 import PhantomTest from './pages/PhantomTest';
+
 import './App.css';
+
+function RootTest() {
+  return (
+    <div className="p-10">
+      <h1 className="text-3xl font-bold mb-4">
+        Root Test
+      </h1>
+
+      <p className="mb-6">
+        If Phantom does NOT show the malicious warning here,
+        then the problem is somewhere inside Launchpad.
+      </p>
+
+      <WalletMultiButton />
+    </div>
+  );
+}
 
 function App() {
   return (
@@ -23,24 +45,29 @@ function App() {
           <SolanaProvider>
             <BrowserRouter>
               <div className="App min-h-screen bg-background">
-               <MainnetWarningBanner />
+                <MainnetWarningBanner />
 
-               <Header />
+                <Header />
 
-               <div className="flex">
+                <div className="flex">
+                  <Sidebar />
 
-                 <Sidebar />
+                  <main className="flex-1">
+                    <Routes>
+                      {/* TEMPORARY TEST */}
+                      <Route path="/" element={<RootTest />} />
 
-                 <main className="flex-1">
-                   <Routes>
-                     <Route path="/" element={<Launchpad />} />
-                     <Route path="/explorer" element={<Explorer />} />
-                     <Route path="/airdrop" element={<Airdrop />} />
-                     <Route path="/phantom-test" element={<PhantomTest />} />
-                   </Routes>
-                 </main>
+                      {/* Keep all the others */}
+                      <Route path="/explorer" element={<Explorer />} />
+                      <Route path="/airdrop" element={<Airdrop />} />
+                      <Route path="/phantom-test" element={<PhantomTest />} />
 
-               </div>
+                      {/* Leave Launchpad available on another route */}
+                      <Route path="/launchpad-test" element={<Launchpad />} />
+                    </Routes>
+                  </main>
+                </div>
+
                 <DiagnosticsPanel />
                 <Toaster position="top-right" />
               </div>
