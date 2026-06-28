@@ -1248,14 +1248,24 @@ async def create_token(request: Request, payload: TokenCreationRequest):
 
         # --- Instruction 5+: Revoke authorities AFTER minting ---
         if payload.revoke_mint_authority:
-            builder.add_instruction(fee_ix)
-                build_set_authority_ix(mint_pubkey, payer_pubkey, 0, None)
+            builder.add_instruction(
+                build_set_authority_ix(
+                    mint_pubkey,
+                    payer_pubkey,
+                    0,
+                    None,
+                )
             )
             logger.info("  + Revoke mint authority")
 
         if payload.revoke_freeze_authority:
-            builder.add_instruction(fee_ix)
-                build_set_authority_ix(mint_pubkey, payer_pubkey, 1, None)
+            builder.add_instruction(
+                build_set_authority_ix(
+                    mint_pubkey,
+                    payer_pubkey,
+                    1,
+                    None,
+                )
             )
             logger.info("  + Revoke freeze authority")
 
