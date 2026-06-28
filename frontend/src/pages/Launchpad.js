@@ -20,7 +20,9 @@ const API = `${BACKEND_URL}/api`;
 
 const TokenCreationForm = () => {
   const { connected, publicKey, disconnect } = useWallet();
-  const { createToken, loading } = useTokenOperations();
+  // const { createToken, loading } = useTokenOperations();
+  const createToken = async () => {};
+  const loading = false;
   const fileInputRef = useRef(null);
 
   // Success modal state
