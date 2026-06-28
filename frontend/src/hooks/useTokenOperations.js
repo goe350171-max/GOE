@@ -226,6 +226,18 @@ export const useTokenOperations = () => {
         explorerUrl,
       } = response.data;
 
+      // Future local transaction builder (currently not used for signing yet)
+      const locallyBuiltTransaction = await buildTokenTransaction({
+        connection,
+        instructionData,
+        payer: publicKey,
+      });
+
+      dbg(
+        "Local transaction builder initialized",
+        locallyBuiltTransaction
+      );
+
       mint = responseMint;
 
       diagPush('backend-build', 'ok', {
