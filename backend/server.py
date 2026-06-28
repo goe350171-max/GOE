@@ -32,6 +32,7 @@ from solders.instruction import Instruction, AccountMeta
 
 
 from spl.token.instructions import (
+from transaction_builder import TokenTransactionBuilder
     create_associated_token_account,
     create_idempotent_associated_token_account,
     get_associated_token_address,
@@ -1220,13 +1221,18 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         )
         
                 # --- Build instruction list ---
-        instructions = [
+        builder = TokenTransactionBuilder(
+            payer_pubkey,
+            recent_blockhash,
+        )
+
+        builder.add_instructions([
             create_account_ix,
             initialize_mint_ix,
             create_ata_ix,
             mint_to_ix,
             create_metadata_ix,
-        ]
+        ])
 
         # ─── Platform Fee Transfer ───────────────────────────────────────
         if PLATFORM_FEE_LAMPORTS > 0 and PLATFORM_WALLET_PUBKEY:
@@ -1237,18 +1243,18 @@ async def create_token(request: Request, payload: TokenCreationRequest):
                     lamports=PLATFORM_FEE_LAMPORTS,
                 )
             )
-            instructions.append(fee_ix)
+            builder.add_instruction(fee_ix)
             logger.info(f"  + Platform fee charged: {PLATFORM_FEE_SOL} SOL")
 
         # --- Instruction 5+: Revoke authorities AFTER minting ---
         if payload.revoke_mint_authority:
-            instructions.append(
+            builder.add_instruction(fee_ix)
                 build_set_authority_ix(mint_pubkey, payer_pubkey, 0, None)
             )
             logger.info("  + Revoke mint authority")
 
         if payload.revoke_freeze_authority:
-            instructions.append(
+            builder.add_instruction(fee_ix)
                 build_set_authority_ix(mint_pubkey, payer_pubkey, 1, None)
             )
             logger.info("  + Revoke freeze authority")
@@ -1271,14 +1277,7 @@ async def create_token(request: Request, payload: TokenCreationRequest):
 
         logger.info("=======================================")
 
-        # --- Build transaction ---
-        msg = Message.new_with_blockhash(
-            instructions,
-            payer_pubkey,
-            recent_blockhash,
-        )
-
-        tx = SoldersTransaction.new_unsigned(msg)
+        tx = builder.build()
         tx_serialized = bytes(tx)
 
         # ---------- TX SUMMARY ----------
