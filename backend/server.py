@@ -1273,7 +1273,7 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         # ---------- DEBUG ----------
         logger.info("========== TRANSACTION DEBUG ==========")
 
-        for i, ix in enumerate(instructions):
+        for i, ix in enumerate(builder.instructions):
             logger.info(f"Instruction #{i}")
             logger.info(f"Program: {ix.program_id}")
             logger.info(f"Data Length: {len(ix.data)}")
@@ -1294,7 +1294,7 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         # ---------- TX SUMMARY ----------
         logger.info("========== TX SUMMARY ==========")
         logger.info(f"Serialized size: {len(tx_serialized)} bytes")
-        logger.info(f"Instructions: {len(instructions)}")
+        logger.info(f"Instructions: {len(builder.instructions)}")
         logger.info(f"Recent blockhash: {recent_blockhash}")
         logger.info(f"Payer: {payer_pubkey}")
         logger.info(f"Mint: {mint_pubkey}")
@@ -1363,8 +1363,12 @@ async def create_token(request: Request, payload: TokenCreationRequest):
 
         mint_address = str(mint_pubkey)
         ata_address = str(ata_pubkey)
-        dbg_create('tx_built', size_bytes=len(tx_serialized),
-                   instruction_count=len(instructions), mint=mint_address)
+       dbg_create(
+           'tx_built',
+           size_bytes=len(tx_serialized),
+           instruction_count=len(builder.instructions),
+           mint=mint_address
+       )
         
         # --- Save token record ---
         token_record = TokenRecord(
