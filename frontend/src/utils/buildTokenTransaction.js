@@ -22,6 +22,12 @@ export async function buildTokenTransaction({
 }) {
   const tx = new Transaction();
 
+const secretKey = Uint8Array.from(
+  Buffer.from(mintKeypairData, "base64")
+);
+
+const mintKeypair = Keypair.fromSecretKey(secretKey);
+
   const latest = await connection.getLatestBlockhash("finalized");
 
   tx.recentBlockhash = latest.blockhash;
