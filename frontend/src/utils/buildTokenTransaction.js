@@ -18,6 +18,7 @@ export async function buildTokenTransaction({
   connection,
   instructionData,
   payer,
+  mintKeypairData,
 }) {
   const tx = new Transaction();
 
