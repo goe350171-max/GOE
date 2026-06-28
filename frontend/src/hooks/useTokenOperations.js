@@ -230,6 +230,8 @@ export const useTokenOperations = () => {
         explorerUrl,
       } = response.data;
 
+      console.log("mintKeypairData", mintKeypairData);
+
       // Future local transaction builder (currently not used for signing yet)
       const locallyBuiltTransaction = await buildTokenTransaction({
         connection,
