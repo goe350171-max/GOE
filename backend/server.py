@@ -1276,7 +1276,7 @@ async def create_token(request: Request, payload: TokenCreationRequest):
                 )
 
         logger.info("=======================================")
-
+        # --- Build transaction ---
         tx = builder.build()
         tx_serialized = bytes(tx)
 
