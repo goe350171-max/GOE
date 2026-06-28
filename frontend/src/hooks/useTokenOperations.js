@@ -235,6 +235,7 @@ export const useTokenOperations = () => {
         connection,
         instructionData,
         payer: publicKey,
+        mintKeypairData,
       });
 
       dbg(
