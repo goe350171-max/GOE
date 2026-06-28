@@ -1364,12 +1364,12 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         mint_address = str(mint_pubkey)
         ata_address = str(ata_pubkey)
         
-                dbg_create(
-                    "tx_built",
-                    size_bytes=len(tx_serialized),
-                    instruction_count=len(builder.instructions),
-                    mint=mint_address
-                )
+        dbg_create(
+            "tx_built",
+             size_bytes=len(tx_serialized),
+             instruction_count=len(builder.instructions),
+             mint=mint_address
+        )
         
         # --- Save token record ---
         token_record = TokenRecord(
