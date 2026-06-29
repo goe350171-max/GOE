@@ -263,33 +263,24 @@ export const useTokenOperations = () => {
         throw new Error(`Transaction.from() failed: ${e.message}`);
       }
 
-      // IMPORTANT: The backend has already partial-signed the transaction with
-      // the mint keypair using its blockhash. We must NOT replace the blockhash
-      // here — doing so would invalidate the mint signature.
-      // Instead, we fetch the lastValidBlockHeight for the existing blockhash
-      // so confirmTransaction() works correctly, and log a warning if the
-      // frontend connection is pointing at a different cluster than the backend.
+      // ── 2. Refresh blockhash from frontend connection ──────────────────
+      // Single-signer transaction (payer only) — safe to refresh blockhash.
       const backendBlockhash = transaction.recentBlockhash;
       try {
         const latest = await connection.getLatestBlockhash('finalized');
-        // Keep the original blockhash (already signed), just store lastValidBlockHeight
+        transaction.recentBlockhash = latest.blockhash;
         transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
         diagPush('blockhash-refresh', 'ok', {
           backend: backendBlockhash?.slice(0, 12),
           cluster: latest.blockhash?.slice(0, 12),
           rpcEndpoint: connection?.rpcEndpoint?.replace(/api-key=[^&]+/, 'api-key=***'),
-          matched: backendBlockhash === latest.blockhash,
-          note: 'Blockhash NOT replaced — backend already signed with it',
         });
-        if (backendBlockhash !== latest.blockhash) {
-          dbg('2/9 WARNING: backend and frontend blockhashes differ — may indicate network mismatch');
-        }
       } catch (e) {
         diagPush('blockhash-refresh', 'fail', {
           error: e.message,
           rpcEndpoint: connection?.rpcEndpoint?.replace(/api-key=[^&]+/, 'api-key=***'),
         });
-        throw new Error(`Could not fetch lastValidBlockHeight from cluster: ${e.message}`);
+        throw new Error(`Could not refresh blockhash from cluster: ${e.message}`);
       }
 
       // Defensive: force-set feePayer in case deserialization dropped it.
