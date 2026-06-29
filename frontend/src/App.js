@@ -1,6 +1,5 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 
 import { NetworkProvider } from './contexts/NetworkContext';
 import { DiagnosticsProvider } from './contexts/DiagnosticsContext';
@@ -20,23 +19,6 @@ import PhantomTest from './pages/PhantomTest';
 
 import './App.css';
 
-function RootTest() {
-  return (
-    <div className="p-10">
-      <h1 className="text-3xl font-bold mb-4">
-        Root Test
-      </h1>
-
-      <p className="mb-6">
-        If Phantom does NOT show the malicious warning here,
-        then the problem is somewhere inside Launchpad.
-      </p>
-
-      <WalletMultiButton />
-    </div>
-  );
-}
-
 function App() {
   return (
     <ErrorBoundary>
@@ -54,15 +36,12 @@ function App() {
 
                   <main className="flex-1">
                     <Routes>
-                      {/* TEMPORARY TEST */}
-                      <Route path="/" element={<RootTest />} />
-
-                      {/* Keep all the others */}
+                      <Route path="/" element={<Launchpad />} />
                       <Route path="/explorer" element={<Explorer />} />
                       <Route path="/airdrop" element={<Airdrop />} />
                       <Route path="/phantom-test" element={<PhantomTest />} />
 
-                      {/* Leave Launchpad available on another route */}
+                      {/* Optional: keep this while debugging */}
                       <Route path="/launchpad-test" element={<Launchpad />} />
                     </Routes>
                   </main>
