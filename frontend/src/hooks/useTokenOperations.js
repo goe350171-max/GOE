@@ -1,5 +1,5 @@
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
-import { Transaction, PublicKey, Keypair } from '@solana/web3.js';
+import { Transaction, PublicKey } from '@solana/web3.js';
 import axios from 'axios';
 import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
@@ -9,7 +9,6 @@ import { useDiagnostics } from '../contexts/DiagnosticsContext';
 
 import { simulateTxCost, TX_ACTIONS } from '../utils/txSafety';
 import { extractErrorMessage } from '../utils/errors';
-import { buildTokenTransaction } from '../utils/buildTokenTransaction';
 
 const DEBUG = (process.env.REACT_APP_DEBUG_TOKEN_CREATE ?? 'true') !== 'false';
 const dbg = (label, ...args) => {
@@ -141,7 +140,7 @@ export const useTokenOperations = () => {
   /**
    * Token creation flow with safety guards:
    *   1. Build tx on backend
-   *   2. Deserialize + partialSign mint keypair (no user-visible action yet)
+   *   2. Deserialize — backend has already partial-signed with mint keypair
    *   3. Simulate transaction → compute SOL cost
    *   4. Call confirmBeforeSign({ simulation, ... }) and AWAIT user's explicit click
    *      (this is the safety gate — automation cannot bypass it)
@@ -220,7 +219,6 @@ export const useTokenOperations = () => {
       const {
         transaction: txData,
         instructionData,
-        mintKeypair: mintKeypairData,
         mint: responseMint,
         ata,
         totalMinted,
@@ -230,20 +228,8 @@ export const useTokenOperations = () => {
         explorerUrl,
       } = response.data;
 
-      console.log("mintKeypairData", mintKeypairData);
-
-      // Future local transaction builder (currently not used for signing yet)
-      const locallyBuiltTransaction = await buildTokenTransaction({
-        connection,
-        instructionData,
-        payer: publicKey,
-        mintKeypairData,
-      });
-
-      dbg(
-        "Local transaction builder initialized",
-        locallyBuiltTransaction
-      );
+      // The mint pubkey is returned directly — we never need the private key on the frontend.
+      const mintPubkeyStr = instructionData?.mint || responseMint;
 
       mint = responseMint;
 
@@ -277,31 +263,33 @@ export const useTokenOperations = () => {
         throw new Error(`Transaction.from() failed: ${e.message}`);
       }
 
-      // CRITICAL FIX (regression after NetworkContext refactor):
-      // The backend stamps the tx with a blockhash from its OWN RPC
-      // (Helius mainnet). After the network switch the frontend's
-      // `connection` can point to devnet — so signing/sending fails because
-      // the cluster doesn't recognise the blockhash. Force a fresh blockhash
-      // from the user's actual connection so they always match.
+      // IMPORTANT: The backend has already partial-signed the transaction with
+      // the mint keypair using its blockhash. We must NOT replace the blockhash
+      // here — doing so would invalidate the mint signature.
+      // Instead, we fetch the lastValidBlockHeight for the existing blockhash
+      // so confirmTransaction() works correctly, and log a warning if the
+      // frontend connection is pointing at a different cluster than the backend.
       const backendBlockhash = transaction.recentBlockhash;
-      let clusterBlockhash = backendBlockhash;
       try {
         const latest = await connection.getLatestBlockhash('finalized');
-        clusterBlockhash = latest.blockhash;
-        transaction.recentBlockhash = latest.blockhash;
+        // Keep the original blockhash (already signed), just store lastValidBlockHeight
         transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
         diagPush('blockhash-refresh', 'ok', {
           backend: backendBlockhash?.slice(0, 12),
-          cluster: clusterBlockhash?.slice(0, 12),
+          cluster: latest.blockhash?.slice(0, 12),
           rpcEndpoint: connection?.rpcEndpoint?.replace(/api-key=[^&]+/, 'api-key=***'),
-          matched: backendBlockhash === clusterBlockhash,
+          matched: backendBlockhash === latest.blockhash,
+          note: 'Blockhash NOT replaced — backend already signed with it',
         });
+        if (backendBlockhash !== latest.blockhash) {
+          dbg('2/9 WARNING: backend and frontend blockhashes differ — may indicate network mismatch');
+        }
       } catch (e) {
         diagPush('blockhash-refresh', 'fail', {
           error: e.message,
           rpcEndpoint: connection?.rpcEndpoint?.replace(/api-key=[^&]+/, 'api-key=***'),
         });
-        throw new Error(`Could not refresh blockhash from cluster: ${e.message}`);
+        throw new Error(`Could not fetch lastValidBlockHeight from cluster: ${e.message}`);
       }
 
       // Defensive: force-set feePayer in case deserialization dropped it.
@@ -310,16 +298,12 @@ export const useTokenOperations = () => {
         dbg('2/9 feePayer was null — force-set from wallet');
       }
 
-      const mintKeypairBuffer = Buffer.from(mintKeypairData, 'base64');
-      const mintKeypair = Keypair.fromSecretKey(mintKeypairBuffer);
-      // Re-partial-sign with the FRESH blockhash (the previous mint signature
-      // would be invalid against the new blockhash).
-      transaction.partialSign(mintKeypair);
-
+      // NOTE: The backend has already partial-signed with the mint keypair.
+      // No mint private key handling needed here.
       if (safeMode) {
         // SAFE MODE: skip deep inspection + size precheck + simulation.
         // Use the simplest previously-working path: deserialize → set
-        // feePayer → refresh blockhash → partial-sign mint → wallet sign → send.
+        // feePayer → keep blockhash (backend already signed) → wallet sign → send.
         diagPush('safe-mode', 'ok', {
           message: 'Bypassing inspect/simulate/size wrappers — minimal signing path',
         });
@@ -328,7 +312,7 @@ export const useTokenOperations = () => {
         const inspectResult = inspectTransaction(
           transaction,
           publicKey.toBase58(),
-          mintKeypair.publicKey.toBase58(),
+          mintPubkeyStr,
         );
         diagPush('deserialize', inspectResult.issues.length > 0 ? 'fail' : 'ok', {
           ...inspectResult.info,
@@ -459,7 +443,7 @@ export const useTokenOperations = () => {
       if (typeof confirmBeforeSign === 'function') {
         approved = await confirmBeforeSign({
           simulation,
-          prepared: { transaction, mint, ata, totalMinted, mintKeypair },
+          prepared: { transaction, mint, ata, totalMinted },
         });
       }
       if (!approved) {
