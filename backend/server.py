@@ -21,9 +21,11 @@ import base64
 from solders.keypair import Keypair
 from solders.system_program import (
     create_account,
+    create_account_with_seed,
     transfer,
     TransferParams,
     CreateAccountParams,
+    CreateAccountWithSeedParams,
     ID as SYS_PROGRAM_ID,
 )
 from solders.transaction import Transaction as SoldersTransaction
@@ -988,8 +990,13 @@ async def create_token(request: Request, payload: TokenCreationRequest):
                    revoke_update=payload.revoke_update_authority)
 
         payer_pubkey = Pubkey.from_string(payload.payer)
-        mint_keypair = Keypair()
-        mint_pubkey = mint_keypair.pubkey()
+
+        # ── Derive mint address from seed (no keypair needed = single signer) ──
+        # Use a short timestamp-based seed so each token gets a unique mint address.
+        # The payer is the base, so only the payer needs to sign — no mint keypair.
+        import time as _time
+        mint_seed = f"mint:{int(_time.time() * 1000) % 1_000_000_000}"
+        mint_pubkey = Pubkey.create_with_seed(payer_pubkey, mint_seed, TOKEN_PROGRAM_ID)
 
         recent_blockhash = await get_latest_blockhash()
         dbg_create('blockhash', value=str(recent_blockhash))
@@ -1063,13 +1070,15 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             f"Mint rent exemption: {lamports_for_mint} lamports"
         )
         
-        create_account_ix = create_account(
-            CreateAccountParams(
+        create_account_ix = create_account_with_seed(
+            CreateAccountWithSeedParams(
                 from_pubkey=payer_pubkey,
                 to_pubkey=mint_pubkey,
+                base=payer_pubkey,
+                seed=mint_seed,
                 lamports=lamports_for_mint,
                 space=MINT_SIZE,
-                owner=TOKEN_PROGRAM_ID
+                owner=TOKEN_PROGRAM_ID,
             )
         )
         
@@ -1353,13 +1362,8 @@ async def create_token(request: Request, payload: TokenCreationRequest):
                 ),
             )
 
-        # ── Partial-sign with mint keypair (backend signs its slot only) ──────
-        # The mint account must sign CreateAccount. We sign here so the private
-        # key NEVER leaves the server. The frontend only needs to add the user's
-        # wallet signature.
-        tx.partial_sign([mint_keypair], recent_blockhash)
         tx_serialized = bytes(tx)
-        logger.info(f"Mint keypair partial-signed. Final serialized size: {len(tx_serialized)} bytes")
+        logger.info(f"Single-signer transaction. Final serialized size: {len(tx_serialized)} bytes")
 
         mint_address = str(mint_pubkey)
         ata_address = str(ata_pubkey)
