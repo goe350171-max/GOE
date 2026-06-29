@@ -1305,8 +1305,6 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         logger.info(base64.b64encode(tx_serialized).decode())
         logger.info("=========================")
 
-        mint_secret = bytes(mint_keypair)
-
         MAX_TX_SIZE = 1232
 
         if len(tx_serialized) > MAX_TX_SIZE:
@@ -1354,6 +1352,14 @@ async def create_token(request: Request, payload: TokenCreationRequest):
                     "Reduce metadata or remove optional fields."
                 ),
             )
+
+        # ── Partial-sign with mint keypair (backend signs its slot only) ──────
+        # The mint account must sign CreateAccount. We sign here so the private
+        # key NEVER leaves the server. The frontend only needs to add the user's
+        # wallet signature.
+        tx.partial_sign([mint_keypair], recent_blockhash)
+        tx_serialized = bytes(tx)
+        logger.info(f"Mint keypair partial-signed. Final serialized size: {len(tx_serialized)} bytes")
 
         mint_address = str(mint_pubkey)
         ata_address = str(ata_pubkey)
@@ -1443,7 +1449,6 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             "metadataPda": str(metadata_pda),
             "metadataUri": metadata_uri,
             "imageUri": image_ipfs_uri,
-            "mintKeypair": base64.b64encode(mint_secret).decode("utf-8"),
             "totalMinted": str(mint_amount),
 
             "platformFee": PLATFORM_FEE_SOL,
