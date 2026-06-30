@@ -131,7 +131,7 @@ async function verifyOnChain(connection, mintPubkey, ataPubkey, expectedRaw, max
 
 export const useTokenOperations = () => {
   const { connection } = useConnection();
-  const { publicKey, signTransaction, wallet } = useWallet();
+  const { publicKey, signTransaction, sendTransaction, wallet } = useWallet();
   const { isMainnet, testMode, safeMode, recordSignedTransaction } = useNetwork();
   const { push: diagPush, clear: diagClear } = useDiagnostics();
   const [loading, setLoading] = useState(false);
@@ -152,7 +152,7 @@ export const useTokenOperations = () => {
    * confirmBeforeSign signature: ({ simulation, prepared }) => Promise<boolean>
    */
   const createToken = useCallback(async (tokenData, { confirmBeforeSign } = {}) => {
-    if (!publicKey || !signTransaction) {
+    if (!publicKey || !sendTransaction) {
       toast.error('Please connect your wallet');
       return null;
     }
@@ -444,80 +444,41 @@ export const useTokenOperations = () => {
       }
       diagPush('user-confirm', 'ok');
 
-      // ── 5. Wallet signing ──────────────────────────────────────────────
+      // ── 5+6. Sign AND send via wallet adapter (Blowfish-approved flow) ──
+      // Using sendTransaction instead of signTransaction+sendRawTransaction
+      // allows Blowfish/Phantom to inject their Lighthouse guard instructions,
+      // which removes the "This dApp could be malicious" warning.
       diagPush('wallet-sign', 'start', { adapter: wallet?.adapter?.name });
-      dbg('5/9 requesting wallet signature');
+      dbg('5/9 requesting wallet signAndSend');
       toast.loading('Sign the transaction in your wallet…', { id: 'tx-sign' });
-      let signedTx;
-      try {
-        signedTx = await signTransaction(transaction);
-      } catch (signErr) {
-        // Phantom / wallet-adapter generic 'invalid arguments' surfaces HERE most often
-        diagPush('wallet-sign', 'fail', {
-          adapter: wallet?.adapter?.name,
-          errorName: signErr?.name,
-          errorCode: signErr?.code,
-          errorMessage: signErr?.message,
-        });
-        toast.dismiss('tx-sign');
-        throw signErr;
-      }
-      diagPush('wallet-sign', 'ok', {
-        signaturesAfterSign: (signedTx?.signatures || []).map((s) => ({
-          pubkey: s.publicKey?.toBase58?.(),
-          signed: !!s.signature,
-        })),
-      });
-      dbg('5/9 wallet signed');
-
-      const postSignBytes = signedTx.serialize().length;
-      diagPush('size-check-postsign', postSignBytes > 1232 ? 'fail' : 'ok', { postSignBytes });
-
-      // ── 6. Send. NO auto-retry on mainnet. ────────────────────────────
-      toast.dismiss('tx-sign');
-      toast.loading('Sending transaction…', { id: 'tx-send' });
-      diagPush('send', 'start', { maxRetries: isMainnet ? 0 : 3 });
       let signature;
       try {
-        signature = await connection.sendRawTransaction(signedTx.serialize(), {
+        signature = await sendTransaction(transaction, connection, {
           skipPreflight: false,
           preflightCommitment: 'confirmed',
           maxRetries: isMainnet ? 0 : 3,
         });
+        diagPush('wallet-sign', 'ok', { signature });
         diagPush('send', 'ok', { signature });
-        dbg('6/9 sent', { signature });
-      } catch (sendErr) {
-        const errLogs = sendErr.logs || [];
-        const failingIxMatch = errLogs.find((l) => /Instruction \d+: /i.test(l));
-        diagPush('send', 'fail', {
-          errorName: sendErr?.name,
-          errorMessage: sendErr?.message,
-          failingInstruction: failingIxMatch,
-          lastLog: errLogs.slice(-1)[0],
+        dbg('5+6/9 wallet signed and sent', { signature });
+      } catch (signSendErr) {
+        diagPush('wallet-sign', 'fail', {
+          adapter: wallet?.adapter?.name,
+          errorName: signSendErr?.name,
+          errorCode: signSendErr?.code,
+          errorMessage: signSendErr?.message,
         });
-        if (sendErr.logs) {
-          dbg('6/9 sendRawTransaction error logs:', sendErr.logs);
+        toast.dismiss('tx-sign');
+        if (signSendErr.logs) {
+          dbg('5+6/9 signAndSend error logs:', signSendErr.logs);
+          console.error(signSendErr.logs);
         }
-        if (typeof sendErr.getLogs === 'function') {
-          try {
-            const logs = await sendErr.getLogs();
-            dbg('6/9 SendTransactionError.getLogs:', logs);
-          } catch (_) { /* ignore */ }
+        if (signSendErr.message?.includes('insufficient lamports')) {
+          throw new Error('Your wallet does not have enough SOL to complete this transaction.');
         }
-        if (sendErr.logs) {
-         console.error(sendErr.logs);
-        }
-
-       if (
-          sendErr.message?.includes("insufficient lamports")
-       ) {
-          throw new Error(
-              "Your wallet does not have enough SOL to complete this transaction."
-          );
-       }
-
-       throw sendErr;
+        throw signSendErr;
       }
+      toast.dismiss('tx-sign');
 
       // ── 7. Wait for finalized confirmation ────────────────────────────
       toast.dismiss('tx-send');
@@ -624,7 +585,7 @@ export const useTokenOperations = () => {
     } finally {
       setLoading(false);
     }
-  }, [publicKey, signTransaction, connection, isMainnet, testMode, safeMode, recordSignedTransaction, wallet, diagPush, diagClear]);
+  }, [publicKey, sendTransaction, connection, isMainnet, testMode, safeMode, recordSignedTransaction, wallet, diagPush, diagClear]);
 
   const revokeAuthority = useCallback(async (mint, authorityType, { confirmBeforeSign } = {}) => {
     if (!publicKey || !signTransaction) {
