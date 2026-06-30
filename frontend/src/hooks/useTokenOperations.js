@@ -444,6 +444,23 @@ export const useTokenOperations = () => {
       }
       diagPush('user-confirm', 'ok');
 
+      // ── Re-refresh blockhash right before signing ──────────────────────
+      // The user may have spent time reading the safety modal before
+      // clicking Confirm. The blockhash fetched in step 2 can expire by now,
+      // causing "Signature has expired: block height exceeded" at send time.
+      // Get a fresh one immediately before the wallet signs.
+      try {
+        const freshBlockhash = await connection.getLatestBlockhash('finalized');
+        transaction.recentBlockhash = freshBlockhash.blockhash;
+        transaction.lastValidBlockHeight = freshBlockhash.lastValidBlockHeight;
+        diagPush('blockhash-refresh-presign', 'ok', {
+          blockhash: freshBlockhash.blockhash?.slice(0, 12),
+        });
+      } catch (e) {
+        diagPush('blockhash-refresh-presign', 'fail', { error: e.message });
+        // Non-fatal — fall back to the earlier blockhash if this refresh fails
+      }
+
       // ── 5+6. Sign AND send via native provider signAndSendTransaction ──
       // Blowfish requires provider.signAndSendTransaction() — this allows
       // Blowfish to inject Lighthouse guard instructions and removes the
