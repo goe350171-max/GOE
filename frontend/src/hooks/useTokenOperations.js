@@ -511,6 +511,9 @@ export const useTokenOperations = () => {
         if (signSendErr.message?.includes('insufficient lamports')) {
           throw new Error('Your wallet does not have enough SOL to complete this transaction.');
         }
+        if (signSendErr.message?.includes('block height exceeded') || signSendErr.message?.includes('expired')) {
+          throw new Error('The transaction took too long to sign and expired. Please click Create Token again — this usually works on retry.');
+        }
         throw signSendErr;
       }
       toast.dismiss('tx-sign');
@@ -520,16 +523,48 @@ export const useTokenOperations = () => {
       toast.loading('Waiting for finalized confirmation…', { id: 'tx-confirm' });
       diagPush('confirm', 'start');
 
-      // Reuse the lastValidBlockHeight we got when refreshing the blockhash
-      // — same cluster, no need for another RPC round-trip.
-      const confirmResult = await connection.confirmTransaction(
-        {
-          signature,
-          blockhash: transaction.recentBlockhash,
-          lastValidBlockHeight: transaction.lastValidBlockHeight,
-        },
-        'finalized',
-      );
+      let confirmResult;
+      try {
+        // Reuse the lastValidBlockHeight we got when refreshing the blockhash
+        // — same cluster, no need for another RPC round-trip.
+        confirmResult = await connection.confirmTransaction(
+          {
+            signature,
+            blockhash: transaction.recentBlockhash,
+            lastValidBlockHeight: transaction.lastValidBlockHeight,
+          },
+          'finalized',
+        );
+      } catch (confirmErr) {
+        // "block height exceeded" from confirmTransaction is often a FALSE
+        // NEGATIVE — the transaction may have already landed, but polling
+        // gave up before reaching 'finalized' commitment. Check the actual
+        // on-chain status directly before declaring failure.
+        if (confirmErr.message?.includes('block height exceeded') || confirmErr.message?.includes('expired')) {
+          dbg('7/9 confirmTransaction threw expiry — checking actual signature status');
+          diagPush('confirm', 'recheck', { reason: 'block height exceeded, verifying directly' });
+          try {
+            const statusResult = await connection.getSignatureStatus(signature, {
+              searchTransactionHistory: true,
+            });
+            const status = statusResult?.value;
+            if (status && !status.err && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')) {
+              // Transaction actually succeeded — proceed as normal
+              dbg('7/9 transaction actually succeeded despite confirmTransaction timeout', status);
+              confirmResult = { value: { err: null }, context: { slot: statusResult.context?.slot } };
+            } else if (status?.err) {
+              throw new Error(`Transaction failed: ${JSON.stringify(status.err)}`);
+            } else {
+              // Genuinely not found / still pending after expiry — real failure
+              throw new Error('Transaction expired before confirmation. Please try again — check the explorer link to verify if it landed: https://explorer.solana.com/tx/' + signature);
+            }
+          } catch (statusErr) {
+            throw statusErr;
+          }
+        } else {
+          throw confirmErr;
+        }
+      }
       dbg('7/9 confirmation', confirmResult.value);
 
       if (confirmResult.value.err) {
