@@ -444,23 +444,41 @@ export const useTokenOperations = () => {
       }
       diagPush('user-confirm', 'ok');
 
-      // ── 5+6. Sign AND send via wallet adapter (Blowfish-approved flow) ──
-      // Using sendTransaction instead of signTransaction+sendRawTransaction
-      // allows Blowfish/Phantom to inject their Lighthouse guard instructions,
-      // which removes the "This dApp could be malicious" warning.
+      // ── 5+6. Sign AND send via native provider signAndSendTransaction ──
+      // Blowfish requires provider.signAndSendTransaction() — this allows
+      // Blowfish to inject Lighthouse guard instructions and removes the
+      // "This dApp could be malicious" warning.
+      // We detect the wallet and call the correct provider method.
       diagPush('wallet-sign', 'start', { adapter: wallet?.adapter?.name });
-      dbg('5/9 requesting wallet signAndSend');
+      dbg('5/9 requesting signAndSendTransaction');
       toast.loading('Sign the transaction in your wallet…', { id: 'tx-sign' });
       let signature;
       try {
-        signature = await sendTransaction(transaction, connection, {
-          skipPreflight: false,
-          preflightCommitment: 'confirmed',
-          maxRetries: isMainnet ? 0 : 3,
-        });
+        const walletName = wallet?.adapter?.name?.toLowerCase() || '';
+
+        if (walletName.includes('phantom') && window.solana?.signAndSendTransaction) {
+          // Phantom native provider
+          const { signature: sig } = await window.solana.signAndSendTransaction(transaction);
+          signature = sig;
+
+        } else if (walletName.includes('solflare') && window.solflare?.signAndSendTransaction) {
+          // Solflare native provider
+          const { signature: sig } = await window.solflare.signAndSendTransaction(transaction);
+          signature = sig;
+
+        } else {
+          // Fallback for any other wallet (Backpack, Glow, etc.)
+          // Use wallet-adapter sendTransaction which calls the wallet's native method
+          signature = await sendTransaction(transaction, connection, {
+            skipPreflight: false,
+            preflightCommitment: 'confirmed',
+            maxRetries: isMainnet ? 0 : 3,
+          });
+        }
+
         diagPush('wallet-sign', 'ok', { signature });
         diagPush('send', 'ok', { signature });
-        dbg('5+6/9 wallet signed and sent', { signature });
+        dbg('5+6/9 signAndSendTransaction complete', { signature });
       } catch (signSendErr) {
         diagPush('wallet-sign', 'fail', {
           adapter: wallet?.adapter?.name,
@@ -470,7 +488,7 @@ export const useTokenOperations = () => {
         });
         toast.dismiss('tx-sign');
         if (signSendErr.logs) {
-          dbg('5+6/9 signAndSend error logs:', signSendErr.logs);
+          dbg('5+6/9 error logs:', signSendErr.logs);
           console.error(signSendErr.logs);
         }
         if (signSendErr.message?.includes('insufficient lamports')) {
