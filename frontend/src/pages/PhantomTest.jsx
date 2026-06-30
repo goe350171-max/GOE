@@ -4,10 +4,10 @@ import { Transaction } from "@solana/web3.js";
 
 const PhantomTest = () => {
   const { connection } = useConnection();
-  const { publicKey, signTransaction } = useWallet();
+  const { publicKey, wallet } = useWallet();
 
   const runTest = async () => {
-    if (!publicKey || !signTransaction) {
+    if (!publicKey || !wallet) {
       alert("Connect wallet first");
       return;
     }
@@ -21,11 +21,19 @@ const PhantomTest = () => {
       lastValidBlockHeight,
     });
 
-    // 🚨 NO INSTRUCTIONS AT ALL
-
     try {
-      await signTransaction(tx);
-      alert("Transaction signed successfully");
+      const walletName = wallet?.adapter?.name?.toLowerCase() || '';
+      let signature;
+      if (walletName.includes('phantom') && window.solana?.signAndSendTransaction) {
+        const { signature: sig } = await window.solana.signAndSendTransaction(tx);
+        signature = sig;
+      } else if (walletName.includes('solflare') && window.solflare?.signAndSendTransaction) {
+        const { signature: sig } = await window.solflare.signAndSendTransaction(tx);
+        signature = sig;
+      } else {
+        signature = await wallet.adapter.sendTransaction(tx, connection);
+      }
+      alert("Transaction sent: " + signature);
     } catch (err) {
       console.error(err);
       alert("Signing failed or rejected");
@@ -36,7 +44,6 @@ const PhantomTest = () => {
     <div style={{ padding: 30 }}>
       <h2>Phantom Safety Test</h2>
       <p>This page sends an EMPTY transaction (no instructions).</p>
-
       <button onClick={runTest}>
         Sign Empty Transaction
       </button>
