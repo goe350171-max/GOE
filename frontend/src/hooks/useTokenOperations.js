@@ -131,7 +131,7 @@ async function verifyOnChain(connection, mintPubkey, ataPubkey, expectedRaw, max
 
 export const useTokenOperations = () => {
   const { connection } = useConnection();
-  const { publicKey, signTransaction, sendTransaction, wallet } = useWallet();
+  const { publicKey, sendTransaction, wallet } = useWallet();
   const { isMainnet, testMode, safeMode, recordSignedTransaction } = useNetwork();
   const { push: diagPush, clear: diagClear } = useDiagnostics();
   const [loading, setLoading] = useState(false);
@@ -144,7 +144,7 @@ export const useTokenOperations = () => {
    *   3. Simulate transaction → compute SOL cost
    *   4. Call confirmBeforeSign({ simulation, ... }) and AWAIT user's explicit click
    *      (this is the safety gate — automation cannot bypass it)
-   *   5. If user confirmed → wallet.signTransaction (Phantom popup)
+   *   5. If user confirmed → signAndSendTransaction (Phantom/Solflare native provider)
    *   6. Send (mainnet: no auto-retry, devnet: up to 3 retries via web3.js)
    *   7. Verify on-chain + persist signature
    *   8. Record audit log entry
@@ -606,7 +606,7 @@ export const useTokenOperations = () => {
   }, [publicKey, sendTransaction, connection, isMainnet, testMode, safeMode, recordSignedTransaction, wallet, diagPush, diagClear]);
 
   const revokeAuthority = useCallback(async (mint, authorityType, { confirmBeforeSign } = {}) => {
-    if (!publicKey || !signTransaction) {
+    if (!publicKey || !sendTransaction) {
       toast.error('Please connect your wallet');
       return null;
     }
@@ -655,12 +655,21 @@ export const useTokenOperations = () => {
       }
       if (!approved) return { success: false, cancelled: true };
 
-      const signedTx = await signTransaction(transaction);
-      const signature = await connection.sendRawTransaction(signedTx.serialize(), {
-        skipPreflight: false,
-        preflightCommitment: 'confirmed',
-        maxRetries: isMainnet ? 0 : 3,
-      });
+      const walletName = wallet?.adapter?.name?.toLowerCase() || '';
+      let signature;
+      if (walletName.includes('phantom') && window.solana?.signAndSendTransaction) {
+        const { signature: sig } = await window.solana.signAndSendTransaction(transaction);
+        signature = sig;
+      } else if (walletName.includes('solflare') && window.solflare?.signAndSendTransaction) {
+        const { signature: sig } = await window.solflare.signAndSendTransaction(transaction);
+        signature = sig;
+      } else {
+        signature = await sendTransaction(transaction, connection, {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+          maxRetries: isMainnet ? 0 : 3,
+        });
+      }
 
       toast.loading('Confirming…', { id: 'rev-confirm' });
       await connection.confirmTransaction(signature, 'finalized');
@@ -687,7 +696,7 @@ export const useTokenOperations = () => {
     } finally {
       setLoading(false);
     }
-  }, [publicKey, signTransaction, connection, isMainnet, testMode, recordSignedTransaction]);
+  }, [publicKey, sendTransaction, wallet, connection, isMainnet, testMode, recordSignedTransaction]);
 
   return {
     createToken,
