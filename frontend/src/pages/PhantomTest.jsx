@@ -24,8 +24,8 @@ const PhantomTest = () => {
     try {
       const walletName = wallet?.adapter?.name?.toLowerCase() || '';
       let signature;
-      if (walletName.includes('phantom') && window.solana?.signAndSendTransaction) {
-        const { signature: sig } = await window.solana.signAndSendTransaction(tx);
+      if (walletName.includes('phantom') && window.phantom?.solana?.signAndSendTransaction) {
+        const { signature: sig } = await window.phantom?.solana?.signAndSendTransaction(tx);
         signature = sig;
       } else if (walletName.includes('solflare') && window.solflare?.signAndSendTransaction) {
         const { signature: sig } = await window.solflare.signAndSendTransaction(tx);
