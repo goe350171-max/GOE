@@ -267,7 +267,7 @@ export const useTokenOperations = () => {
       // Single-signer transaction (payer only) — safe to refresh blockhash.
       const backendBlockhash = transaction.recentBlockhash;
       try {
-        const latest = await connection.getLatestBlockhash('finalized');
+        const latest = await connection.getLatestBlockhash('confirmed');
         transaction.recentBlockhash = latest.blockhash;
         transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
         diagPush('blockhash-refresh', 'ok', {
@@ -450,7 +450,7 @@ export const useTokenOperations = () => {
       // causing "Signature has expired: block height exceeded" at send time.
       // Get a fresh one immediately before the wallet signs.
       try {
-        const freshBlockhash = await connection.getLatestBlockhash('finalized');
+        const freshBlockhash = await connection.getLatestBlockhash('confirmed');
         transaction.recentBlockhash = freshBlockhash.blockhash;
         transaction.lastValidBlockHeight = freshBlockhash.lastValidBlockHeight;
         diagPush('blockhash-refresh-presign', 'ok', {
@@ -518,28 +518,22 @@ export const useTokenOperations = () => {
       }
       toast.dismiss('tx-sign');
 
-      // ── 7. Wait for finalized confirmation ────────────────────────────
+      // ── 7. Wait for confirmation ───────────────────────────────────────
       toast.dismiss('tx-send');
-      toast.loading('Waiting for finalized confirmation…', { id: 'tx-confirm' });
+      toast.loading('Confirming transaction…', { id: 'tx-confirm' });
       diagPush('confirm', 'start');
 
       let confirmResult;
       try {
-        // Reuse the lastValidBlockHeight we got when refreshing the blockhash
-        // — same cluster, no need for another RPC round-trip.
         confirmResult = await connection.confirmTransaction(
           {
             signature,
             blockhash: transaction.recentBlockhash,
             lastValidBlockHeight: transaction.lastValidBlockHeight,
           },
-          'finalized',
+          'confirmed',
         );
       } catch (confirmErr) {
-        // "block height exceeded" from confirmTransaction is often a FALSE
-        // NEGATIVE — the transaction may have already landed, but polling
-        // gave up before reaching 'finalized' commitment. Check the actual
-        // on-chain status directly before declaring failure.
         if (confirmErr.message?.includes('block height exceeded') || confirmErr.message?.includes('expired')) {
           dbg('7/9 confirmTransaction threw expiry — checking actual signature status');
           diagPush('confirm', 'recheck', { reason: 'block height exceeded, verifying directly' });
@@ -549,14 +543,12 @@ export const useTokenOperations = () => {
             });
             const status = statusResult?.value;
             if (status && !status.err && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')) {
-              // Transaction actually succeeded — proceed as normal
               dbg('7/9 transaction actually succeeded despite confirmTransaction timeout', status);
               confirmResult = { value: { err: null }, context: { slot: statusResult.context?.slot } };
             } else if (status?.err) {
-              throw new Error(`Transaction failed: ${JSON.stringify(status.err)}`);
+              throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}`);
             } else {
-              // Genuinely not found / still pending after expiry — real failure
-              throw new Error('Transaction expired before confirmation. Please try again — check the explorer link to verify if it landed: https://explorer.solana.com/tx/' + signature);
+              throw new Error('Transaction expired before confirmation. Please try again.');
             }
           } catch (statusErr) {
             throw statusErr;
@@ -683,7 +675,7 @@ export const useTokenOperations = () => {
       const transaction = Transaction.from(txBuffer);
       // Refresh blockhash + feePayer to match the frontend's actual cluster.
       try {
-        const latest = await connection.getLatestBlockhash('finalized');
+        const latest = await connection.getLatestBlockhash('confirmed');
         transaction.recentBlockhash = latest.blockhash;
         transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
       } catch (_) { /* keep backend blockhash if refresh fails */ }
@@ -736,6 +728,18 @@ export const useTokenOperations = () => {
         sol: simulation.sol,
         details: { authorityType },
       });
+
+      // Update DB to reflect revoked authority — done here after on-chain
+      // confirmation so we don't mark it revoked if user cancels in wallet.
+      try {
+        await axios.post(
+          `${API}/tokens/revoke-authority-status`,
+          null,
+          { params: { mint, authority_type: authorityType } }
+        );
+      } catch (e) {
+        console.warn('Could not update revoke status in DB:', e);
+      }
 
       toast.success(`${authorityType} authority revoked!`);
       return { success: true, signature };
