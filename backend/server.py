@@ -804,6 +804,8 @@ def build_set_authority_ix(
     mapping = {
         0: AuthorityType.MINT_TOKENS,
         1: AuthorityType.FREEZE_ACCOUNT,
+        2: AuthorityType.ACCOUNT_OWNER,
+        3: AuthorityType.CLOSE_ACCOUNT,
     }
 
     return set_authority(
@@ -1654,23 +1656,17 @@ async def revoke_authority(request: Request, payload: AuthorityRevocationRequest
         msg = Message.new_with_blockhash(
             [
                 build_set_authority_ix(
-                    mint_pubkey,
-                    payer_pubkey,
+                    mint_pk,
+                    payer_pk,
                     authority_type_map.get(payload.authority_type, 0),
                     None,
                 )
             ],
-            payer_pubkey,
+            payer_pk,
             recent_blockhash,
         )
         
         tx = SoldersTransaction.new_unsigned(msg)
-        
-        field_name = f"{payload.authority_type}_authority_revoked"
-        await db.tokens.update_one(
-            {"mint": payload.mint},
-            {"$set": {field_name: True}}
-        )
         
         return {
             "transaction": base64.b64encode(bytes(tx)).decode('utf-8'),
