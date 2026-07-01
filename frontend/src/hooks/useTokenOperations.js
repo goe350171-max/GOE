@@ -519,45 +519,63 @@ export const useTokenOperations = () => {
       toast.dismiss('tx-sign');
 
       // ── 7. Wait for confirmation ───────────────────────────────────────
+      // IMPORTANT: signAndSendTransaction sends via Phantom's OWN RPC node,
+      // not our Helius connection. confirmTransaction() polls only our RPC
+      // and times out because it hasn't seen the tx yet. Instead we poll
+      // getSignatureStatus() with searchTransactionHistory:true which
+      // searches across the whole network regardless of which RPC submitted.
       toast.dismiss('tx-send');
       toast.loading('Confirming transaction…', { id: 'tx-confirm' });
       diagPush('confirm', 'start');
 
       let confirmResult;
-      try {
-        confirmResult = await connection.confirmTransaction(
-          {
-            signature,
-            blockhash: transaction.recentBlockhash,
-            lastValidBlockHeight: transaction.lastValidBlockHeight,
-          },
-          'confirmed',
-        );
-      } catch (confirmErr) {
-        if (confirmErr.message?.includes('block height exceeded') || confirmErr.message?.includes('expired')) {
-          dbg('7/9 confirmTransaction threw expiry — checking actual signature status');
-          diagPush('confirm', 'recheck', { reason: 'block height exceeded, verifying directly' });
-          try {
-            const statusResult = await connection.getSignatureStatus(signature, {
-              searchTransactionHistory: true,
-            });
-            const status = statusResult?.value;
-            if (status && !status.err && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')) {
-              dbg('7/9 transaction actually succeeded despite confirmTransaction timeout', status);
-              confirmResult = { value: { err: null }, context: { slot: statusResult.context?.slot } };
-            } else if (status?.err) {
-              throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}`);
-            } else {
-              throw new Error('Transaction expired before confirmation. Please try again.');
-            }
-          } catch (statusErr) {
-            throw statusErr;
+      const MAX_RETRIES = 60;   // 60 × 2s = 120 seconds max wait
+      const RETRY_DELAY = 2000; // poll every 2 seconds
+
+      let confirmed = false;
+      for (let i = 0; i < MAX_RETRIES; i++) {
+        await new Promise(r => setTimeout(r, RETRY_DELAY));
+        try {
+          const statusResult = await connection.getSignatureStatus(signature, {
+            searchTransactionHistory: true,
+          });
+          const status = statusResult?.value;
+          dbg(`7/9 poll ${i + 1}/${MAX_RETRIES}`, status);
+
+          if (status?.err) {
+            throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}`);
           }
-        } else {
-          throw confirmErr;
+
+          if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') {
+            confirmResult = { value: { err: null }, context: { slot: statusResult.context?.slot } };
+            confirmed = true;
+            break;
+          }
+        } catch (pollErr) {
+          if (pollErr.message?.includes('Transaction failed on-chain')) throw pollErr;
+          dbg(`7/9 poll ${i + 1} error (non-fatal):`, pollErr.message);
         }
       }
-      dbg('7/9 confirmation', confirmResult.value);
+
+      if (!confirmed) {
+        // Last resort — check one more time before giving up
+        try {
+          const finalCheck = await connection.getSignatureStatus(signature, {
+            searchTransactionHistory: true,
+          });
+          const status = finalCheck?.value;
+          if (status && !status.err && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')) {
+            confirmResult = { value: { err: null } };
+            confirmed = true;
+          }
+        } catch (_) { /* ignore */ }
+
+        if (!confirmed) {
+          throw new Error(`Transaction may still be processing. Check explorer: https://explorer.solana.com/tx/${signature}`);
+        }
+      }
+
+      dbg('7/9 confirmation', confirmResult?.value);
 
       if (confirmResult.value.err) {
         diagPush('confirm', 'fail', { err: confirmResult.value.err });
