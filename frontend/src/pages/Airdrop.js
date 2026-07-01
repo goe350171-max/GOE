@@ -241,8 +241,8 @@ useEffect(() => {
       feeTx.feePayer = publicKey;
 
       const walletName = wallet?.adapter?.name?.toLowerCase() || '';
-      if (walletName.includes('phantom') && window.solana?.signAndSendTransaction) {
-        const { signature: sig } = await window.solana.signAndSendTransaction(feeTx);
+      if (walletName.includes('phantom') && window.phantom?.solana?.signAndSendTransaction) {
+        const { signature: sig } = await window.phantom?.solana?.signAndSendTransaction(feeTx);
         feeSignature = sig;
       } else if (walletName.includes('solflare') && window.solflare?.signAndSendTransaction) {
         const { signature: sig } = await window.solflare.signAndSendTransaction(feeTx);
