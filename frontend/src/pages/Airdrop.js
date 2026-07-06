@@ -35,7 +35,7 @@ const Airdrop = () => {
   const {
     connected,
     publicKey,
-    wallet,
+    signTransaction,
   } = useWallet();
   const { fetchMintInfo, fetchBalance, executeAirdrop, running } = useAirdropOperations();
   const csvInputRef = useRef(null);
@@ -235,21 +235,13 @@ useEffect(() => {
         })
       );
 
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
 
       feeTx.recentBlockhash = blockhash;
       feeTx.feePayer = publicKey;
 
-      const walletName = wallet?.adapter?.name?.toLowerCase() || '';
-      if (walletName.includes('phantom') && window.phantom?.solana?.signAndSendTransaction) {
-        const { signature: sig } = await window.phantom?.solana?.signAndSendTransaction(feeTx);
-        feeSignature = sig;
-      } else if (walletName.includes('solflare') && window.solflare?.signAndSendTransaction) {
-        const { signature: sig } = await window.solflare.signAndSendTransaction(feeTx);
-        feeSignature = sig;
-      } else {
-        feeSignature = await wallet.adapter.sendTransaction(feeTx, connection);
-      }
+      const signedTx = await signTransaction(feeTx);
+      feeSignature = await connection.sendRawTransaction(signedTx.serialize());
 
       await connection.confirmTransaction(
         { signature: feeSignature, blockhash, lastValidBlockHeight },
