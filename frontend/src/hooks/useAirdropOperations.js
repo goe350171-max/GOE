@@ -11,31 +11,19 @@ const API = `${BACKEND_URL}/api`;
 
 /**
  * Sign + send + confirm one prebuilt airdrop batch transaction.
- * Uses provider.signAndSendTransaction() (Blowfish-approved method).
  * NO auto-retry on mainnet. Returns { success, signature, error }.
  */
-async function signSendAndConfirm(connection, wallet, transaction, isMainnet) {
+async function signSendAndConfirm(connection, signTransaction, transaction, isMainnet) {
   try {
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
     transaction.recentBlockhash = blockhash;
 
-    const walletName = wallet?.adapter?.name?.toLowerCase() || '';
-    let signature;
-
-    if (walletName.includes('phantom') && window.phantom?.solana?.signAndSendTransaction) {
-      const { signature: sig } = await window.phantom?.solana?.signAndSendTransaction(transaction);
-      signature = sig;
-    } else if (walletName.includes('solflare') && window.solflare?.signAndSendTransaction) {
-      const { signature: sig } = await window.solflare.signAndSendTransaction(transaction);
-      signature = sig;
-    } else {
-      // Fallback for other wallets
-      signature = await wallet.adapter.sendTransaction(transaction, connection, {
-        skipPreflight: false,
-        preflightCommitment: 'confirmed',
-        maxRetries: isMainnet ? 0 : 3,
-      });
-    }
+    const signedTx = await signTransaction(transaction);
+    const signature = await connection.sendRawTransaction(signedTx.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+      maxRetries: isMainnet ? 0 : 3,
+    });
 
     const confirm = await connection.confirmTransaction(
       { signature, blockhash, lastValidBlockHeight },
@@ -52,7 +40,7 @@ async function signSendAndConfirm(connection, wallet, transaction, isMainnet) {
 
 export function useAirdropOperations() {
   const { connection } = useConnection();
-  const { publicKey, wallet } = useWallet();
+  const { publicKey, signTransaction } = useWallet();
   const { isMainnet, testMode, recordSignedTransaction } = useNetwork();
   const [running, setRunning] = useState(false);
 
@@ -166,7 +154,7 @@ export function useAirdropOperations() {
     feeSignature,
     onProgress = () => {},
   }) => {
-    if (!publicKey || !wallet) {
+    if (!publicKey || !signTransaction) {
       return { aborted: true, error: 'Wallet not connected' };
     }
     if (testMode) {
@@ -212,7 +200,7 @@ export function useAirdropOperations() {
               sim = { ok: false, soft: true, error: e?.message || 'simulation threw' };
             }
             onProgress({ batchIndex: i, totalBatches: batches.length, attempt, phase: 'signing' });
-            result = await signSendAndConfirm(connection, wallet, transaction, isMainnet);
+            result = await signSendAndConfirm(connection, signTransaction, transaction, isMainnet);
             if (result.success) {
               recordSignedTransaction({
                 action: TX_ACTIONS.AIRDROP_BATCH,
@@ -263,7 +251,7 @@ export function useAirdropOperations() {
     }
 
     return { results };
-  }, [publicKey, wallet, connection, isMainnet, testMode, buildBatch, recordSignedTransaction]);
+  }, [publicKey, signTransaction, connection, isMainnet, testMode, buildBatch, recordSignedTransaction]);
 
   return {
     fetchMintInfo,
