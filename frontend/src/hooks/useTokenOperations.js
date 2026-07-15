@@ -138,6 +138,144 @@ export const useTokenOperations = () => {
   const [error, setError] = useState(null);
 
   /**
+   * SECOND, separate transaction that revokes mint/freeze authority.
+   * Deliberately kept independent from createToken's transaction so that
+   * "mint full supply" and "lock it down" are two distinct signatures,
+   * not one atomic all-or-nothing action.
+   * Returns { success, signature } on success, or
+   * { success:false, cancelled:true } if the user declines,
+   * or { success:false, error } on real failure.
+   * A failure/decline here does NOT mean the token wasn't created —
+   * the token already exists by the time this runs.
+   * Defined BEFORE createToken since createToken's dependency array
+   * references this function — useCallback deps are evaluated immediately
+   * at render time, so this const must already be initialized by then.
+   */
+  const finalizeAuthorities = useCallback(async ({ mint, revokeMintAuthority, revokeFreezeAuthority, confirmBeforeSign }) => {
+    if (!revokeMintAuthority && !revokeFreezeAuthority) {
+      return { success: true, skipped: true };
+    }
+    if (!publicKey || !signTransaction) {
+      return { success: false, error: 'Wallet not connected' };
+    }
+    if (testMode) {
+      return { success: false, error: 'TEST_MODE_BLOCKED' };
+    }
+
+    try {
+      toast.loading('Building finalize (lock) transaction…', { id: 'fin-build' });
+      const response = await axios.post(`${API}/tokens/finalize-authorities`, {
+        mint,
+        payer: publicKey.toBase58(),
+        revoke_mint_authority: revokeMintAuthority,
+        revoke_freeze_authority: revokeFreezeAuthority,
+      });
+
+      const { transaction: txData } = response.data;
+      const txBuffer = Buffer.from(txData, 'base64');
+      const transaction = Transaction.from(txBuffer);
+      try {
+        const latest = await connection.getLatestBlockhash('confirmed');
+        transaction.recentBlockhash = latest.blockhash;
+        transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
+      } catch (_) { /* keep backend blockhash if refresh fails */ }
+      if (!transaction.feePayer) {
+        transaction.feePayer = publicKey;
+      }
+      toast.dismiss('fin-build');
+
+      toast.loading('Simulating…', { id: 'fin-sim' });
+      const simulation = await simulateTxCost(connection, transaction, publicKey.toBase58());
+      toast.dismiss('fin-sim');
+      if (!simulation.ok) {
+        toast.error(`Finalize simulation failed: ${simulation.error}`);
+        return { success: false, error: simulation.error, simulation };
+      }
+
+      let approved = true;
+      if (typeof confirmBeforeSign === 'function') {
+        approved = await confirmBeforeSign({ simulation, prepared: { transaction, mint }, isFinalizeStep: true });
+      }
+      if (!approved) {
+        toast('Token created — authority lock was skipped. You can lock it later from the token page.');
+        return { success: false, cancelled: true };
+      }
+
+      let signedTx;
+      try {
+        signedTx = await signTransaction(transaction);
+      } catch (signErr) {
+        toast.error('Authority lock was not signed — token is still created and usable.');
+        return { success: false, cancelled: true, error: signErr?.message };
+      }
+
+      let signature;
+      try {
+        signature = await connection.sendRawTransaction(signedTx.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+          maxRetries: isMainnet ? 0 : 3,
+        });
+      } catch (sendErr) {
+        if (sendErr.message?.includes('insufficient lamports')) {
+          throw new Error('Not enough SOL to complete the authority lock transaction.');
+        }
+        throw sendErr;
+      }
+
+      toast.loading('Confirming lock…', { id: 'fin-confirm' });
+      try {
+        await connection.confirmTransaction(
+          {
+            signature,
+            blockhash: transaction.recentBlockhash,
+            lastValidBlockHeight: transaction.lastValidBlockHeight,
+          },
+          'confirmed',
+        );
+      } catch (confirmErr) {
+        const statusResult = await connection.getSignatureStatus(signature, {
+          searchTransactionHistory: true,
+        });
+        const status = statusResult?.value;
+        if (!status || status.err || (status.confirmationStatus !== 'confirmed' && status.confirmationStatus !== 'finalized')) {
+          throw new Error('Finalize transaction expired. You can retry locking authorities later.');
+        }
+      }
+      toast.dismiss('fin-confirm');
+
+      recordSignedTransaction({
+        action: TX_ACTIONS.REVOKE_AUTHORITY,
+        mint,
+        wallet: publicKey.toBase58(),
+        signature,
+        lamports: simulation.lamports,
+        sol: simulation.sol,
+        details: { revokeMintAuthority, revokeFreezeAuthority },
+      });
+
+      try {
+        await axios.post(`${API}/tokens/confirm-finalize-authorities`, {
+          mint,
+          signature,
+          revoke_mint_authority: revokeMintAuthority,
+          revoke_freeze_authority: revokeFreezeAuthority,
+        });
+      } catch (e) {
+        console.warn('Could not update finalize status in DB:', e);
+      }
+
+      toast.success('Authorities locked — token is now immutable as configured!');
+      return { success: true, signature };
+    } catch (err) {
+      toast.dismiss('fin-build'); toast.dismiss('fin-sim'); toast.dismiss('fin-confirm');
+      const errorMessage = extractErrorMessage(err);
+      toast.error(`Authority lock failed: ${errorMessage}. Token is still created — you can retry locking later.`);
+      return { success: false, error: errorMessage };
+    }
+  }, [publicKey, signTransaction, connection, isMainnet, testMode, recordSignedTransaction]);
+
+  /**
    * Token creation flow with safety guards:
    *   1. Build tx on backend
    *   2. Deserialize — backend has already partial-signed with mint keypair
@@ -580,6 +718,20 @@ export const useTokenOperations = () => {
       toast.dismiss('tx-verify');
       toast.success('Token created, minted, and verified on-chain!');
 
+      // ── Optional second step: lock authorities in a SEPARATE transaction ──
+      // Only runs if the user requested mint/freeze revocation. Declining or
+      // failing this step does NOT undo the token creation above — the token
+      // already exists and is usable either way.
+      let finalizeResult = { success: true, skipped: true };
+      if (tokenData.revokeMintAuthority || tokenData.revokeFreezeAuthority) {
+        finalizeResult = await finalizeAuthorities({
+          mint,
+          revokeMintAuthority: !!tokenData.revokeMintAuthority,
+          revokeFreezeAuthority: !!tokenData.revokeFreezeAuthority,
+          confirmBeforeSign,
+        });
+      }
+
       return {
         success: true,
         signature,
@@ -589,6 +741,7 @@ export const useTokenOperations = () => {
         creatorBalance: verification.balance || totalMinted,
         explorerUrl: `https://explorer.solana.com/tx/${signature}`,
         verified: verification.verified,
+        finalize: finalizeResult,
       };
     } catch (err) {
       toast.dismiss('tx-build'); toast.dismiss('tx-sim'); toast.dismiss('tx-sign');
@@ -624,8 +777,19 @@ export const useTokenOperations = () => {
     } finally {
       setLoading(false);
     }
-  }, [publicKey, signTransaction, connection, isMainnet, testMode, safeMode, recordSignedTransaction, wallet, diagPush, diagClear]);
+  }, [publicKey, signTransaction, connection, isMainnet, testMode, safeMode, recordSignedTransaction, wallet, diagPush, diagClear, finalizeAuthorities]);
 
+  /**
+   * SECOND, separate transaction that revokes mint/freeze authority.
+   * Deliberately kept independent from createToken's transaction so that
+   * "mint full supply" and "lock it down" are two distinct signatures,
+   * not one atomic all-or-nothing action.
+   * Returns { success, signature } on success, or
+   * { success:false, cancelled:true } if the user declines,
+   * or { success:false, error } on real failure.
+   * A failure/decline here does NOT mean the token wasn't created —
+   * the token already exists by the time this runs.
+   */
   const revokeAuthority = useCallback(async (mint, authorityType, { confirmBeforeSign } = {}) => {
     if (!publicKey || !signTransaction) {
       toast.error('Please connect your wallet');
