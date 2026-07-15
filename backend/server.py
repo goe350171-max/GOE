@@ -1258,28 +1258,14 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             builder.add_instruction(fee_ix)
             logger.info(f"  + Platform fee charged: {PLATFORM_FEE_SOL} SOL")
 
-        # --- Instruction 5+: Revoke authorities AFTER minting ---
-        if payload.revoke_mint_authority:
-            builder.add_instruction(
-                build_set_authority_ix(
-                    mint_pubkey,
-                    payer_pubkey,
-                    0,
-                    None,
-                )
-            )
-            logger.info("  + Revoke mint authority")
-
-        if payload.revoke_freeze_authority:
-            builder.add_instruction(
-                build_set_authority_ix(
-                    mint_pubkey,
-                    payer_pubkey,
-                    1,
-                    None,
-                )
-            )
-            logger.info("  + Revoke freeze authority")
+        # NOTE: Mint/freeze authority revocation is now handled in a SEPARATE
+        # follow-up transaction (see /tokens/finalize-authorities below).
+        # This keeps token creation as a clean "create + mint" operation and
+        # defers the irreversible "lock" step to an explicit second signature,
+        # rather than bundling mint-full-supply + revoke-everything into one
+        # atomic transaction.
+        # (revoke_update_authority is unaffected — it's set via is_mutable on
+        # the metadata instruction above, which happens at creation time.)
 
         # ---------- DEBUG ----------
         logger.info("========== TRANSACTION DEBUG ==========")
@@ -1393,8 +1379,12 @@ async def create_token(request: Request, payload: TokenCreationRequest):
                 "website": payload.metadata.website
             },
             creator=payload.payer,
-            mint_authority_revoked=payload.revoke_mint_authority,
-            freeze_authority_revoked=payload.revoke_freeze_authority,
+            # Mint/freeze authority revocation is now a separate, deferred
+            # transaction (see /tokens/finalize-authorities). These start
+            # False and get flipped to True only after that transaction
+            # actually confirms on-chain — never optimistically here.
+            mint_authority_revoked=False,
+            freeze_authority_revoked=False,
             update_authority_revoked=payload.revoke_update_authority,
 
             status="pending"
@@ -1676,6 +1666,101 @@ async def revoke_authority(request: Request, payload: AuthorityRevocationRequest
     except Exception as e:
         logger.error(f"Error revoking authority: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class FinalizeAuthoritiesRequest(BaseModel):
+    mint: str
+    payer: str
+    revoke_mint_authority: bool = False
+    revoke_freeze_authority: bool = False
+
+    @field_validator('mint', 'payer')
+    @classmethod
+    def _v_pk(cls, v):
+        return _validate_pubkey(v, "address")
+
+
+@api_router.post("/tokens/finalize-authorities")
+@limiter.limit("5/minute")
+async def finalize_authorities(request: Request, payload: FinalizeAuthoritiesRequest):
+    """
+    Builds the SECOND, deferred transaction that revokes mint and/or freeze
+    authority. This is intentionally separate from /tokens/create so that
+    "mint full supply" and "lock it down" are two distinct, separately
+    signed steps rather than one atomic transaction.
+    """
+    if not payload.revoke_mint_authority and not payload.revoke_freeze_authority:
+        raise HTTPException(
+            status_code=400,
+            detail="No authority revocation requested — nothing to finalize.",
+        )
+    try:
+        payer_pk = Pubkey.from_string(payload.payer)
+        mint_pk = Pubkey.from_string(payload.mint)
+
+        recent_blockhash = await get_latest_blockhash()
+
+        instructions = []
+        if payload.revoke_mint_authority:
+            instructions.append(
+                build_set_authority_ix(mint_pk, payer_pk, 0, None)
+            )
+        if payload.revoke_freeze_authority:
+            instructions.append(
+                build_set_authority_ix(mint_pk, payer_pk, 1, None)
+            )
+
+        msg = Message.new_with_blockhash(
+            instructions,
+            payer_pk,
+            recent_blockhash,
+        )
+        tx = SoldersTransaction.new_unsigned(msg)
+
+        return {
+            "transaction": base64.b64encode(bytes(tx)).decode('utf-8'),
+            "mint": payload.mint,
+            "recentBlockhash": str(recent_blockhash),
+            "message": "Finalize (lock authorities) transaction ready for signing",
+        }
+
+    except Exception as e:
+        logger.error(f"Error building finalize-authorities transaction: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class ConfirmFinalizeAuthoritiesRequest(BaseModel):
+    mint: str
+    signature: str
+    revoke_mint_authority: bool = False
+    revoke_freeze_authority: bool = False
+
+
+@api_router.post("/tokens/confirm-finalize-authorities")
+async def confirm_finalize_authorities(payload: ConfirmFinalizeAuthoritiesRequest):
+    """
+    Called by the frontend AFTER the finalize transaction is confirmed
+    on-chain. Updates the token record to reflect the authorities that
+    were actually revoked. Never called optimistically before confirmation.
+    """
+    try:
+        update_fields = {"updated_at": datetime.now(timezone.utc).isoformat()}
+        if payload.revoke_mint_authority:
+            update_fields["mint_authority_revoked"] = True
+        if payload.revoke_freeze_authority:
+            update_fields["freeze_authority_revoked"] = True
+        update_fields["finalize_signature"] = payload.signature
+
+        await db.tokens.update_one(
+            {"mint": payload.mint},
+            {"$set": update_fields},
+        )
+
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Error confirming finalize-authorities: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 async def rpc_get_parsed_account(account: str):
     """Call getAccountInfo with jsonParsed encoding using failover."""
