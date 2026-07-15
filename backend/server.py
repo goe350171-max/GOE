@@ -21,27 +21,33 @@ import base64
 from solders.keypair import Keypair
 from solders.system_program import (
     create_account,
+    create_account_with_seed,
     transfer,
     TransferParams,
     CreateAccountParams,
+    CreateAccountWithSeedParams,
     ID as SYS_PROGRAM_ID,
 )
 from solders.transaction import Transaction as SoldersTransaction
 from solders.message import Message
 from solders.instruction import Instruction, AccountMeta
 
-from spl.token.instructions import create_associated_token_account
-from spl.token.instructions import set_authority, AuthorityType
+from transaction_builder import TokenTransactionBuilder
+
 
 from spl.token.instructions import (
     create_associated_token_account,
+    create_idempotent_associated_token_account,
+    get_associated_token_address,
     set_authority,
     mint_to,
     initialize_mint,
+    transfer_checked,
     AuthorityType,
     MintToParams,
     SetAuthorityParams,
     InitializeMintParams,
+    TransferCheckedParams,
 )
 import asyncio
 import aiohttp
@@ -59,9 +65,18 @@ db = client[os.environ['DB_NAME']]
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI()
+
+@app.get("/debug/spl")
+async def debug_spl():
+    import inspect
+
+    return {
+        "mint_to": str(inspect.signature(mint_to)),
+        "MintToParams": str(MintToParams),
+    }
+
 # Shared HTTP session for all RPC calls
 http_session: aiohttp.ClientSession | None = None
-
 
 @app.on_event("startup")
 async def startup_http_session():
@@ -773,20 +788,7 @@ def build_create_ata_ix(
         owner=owner,
         mint=mint,
     )
-
-
-def build_mint_to_ix(mint: Pubkey, dest_ata: Pubkey, authority: Pubkey, amount: int) -> Instruction:
-    """Build MintTo instruction. Opcode 7, followed by u64 LE amount."""
-    data = bytes([7]) + amount.to_bytes(8, 'little')
-    return Instruction(
-        program_id=TOKEN_PROGRAM_ID,
-        accounts=[
-            AccountMeta(pubkey=mint, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=dest_ata, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=authority, is_signer=True, is_writable=False),
-        ],
-        data=data
-    )
+    
 
 
 def build_set_authority_ix(
@@ -802,30 +804,36 @@ def build_set_authority_ix(
     mapping = {
         0: AuthorityType.MINT_TOKENS,
         1: AuthorityType.FREEZE_ACCOUNT,
+        2: AuthorityType.ACCOUNT_OWNER,
+        3: AuthorityType.CLOSE_ACCOUNT,
     }
 
     return set_authority(
-        account=account,
-        authority=current_authority,
-        authority_type=mapping[authority_type],
-        new_authority=new_authority,
+        SetAuthorityParams(
+            program_id=TOKEN_PROGRAM_ID,
+            account=account,
+            authority=mapping[authority_type],
+            current_authority=current_authority,
+            new_authority=new_authority,
+        )
     )
 
 
-def build_create_ata_idempotent_ix(payer: Pubkey, ata: Pubkey, owner: Pubkey, mint: Pubkey) -> Instruction:
-    """Build CreateAssociatedTokenAccountIdempotent (data = [1]).
-    Will succeed silently if the ATA already exists."""
-    return Instruction(
-        program_id=ASSOCIATED_TOKEN_PROGRAM_ID,
-        accounts=[
-            AccountMeta(pubkey=payer, is_signer=True, is_writable=True),
-            AccountMeta(pubkey=ata, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=owner, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=SYSTEM_PROGRAM_ID, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
-        ],
-        data=bytes([1]),
+def build_create_ata_idempotent_ix(
+    payer: Pubkey,
+    ata: Pubkey,
+    owner: Pubkey,
+    mint: Pubkey,
+) -> Instruction:
+    """
+    Official SPL idempotent ATA builder.
+    'ata' is kept for compatibility but is derived internally.
+    """
+
+    return create_idempotent_associated_token_account(
+        payer=payer,
+        owner=owner,
+        mint=mint,
     )
 
 
@@ -837,19 +845,21 @@ def build_transfer_checked_ix(
     amount: int,
     decimals: int,
 ) -> Instruction:
-    """Build SPL Token TransferChecked instruction (opcode 12).
-    Layout: u8(12) + u64 LE amount + u8 decimals.
-    Verifies mint + decimals on-chain (safer than basic Transfer)."""
-    data = bytes([12]) + amount.to_bytes(8, 'little') + bytes([decimals])
-    return Instruction(
-        program_id=TOKEN_PROGRAM_ID,
-        accounts=[
-            AccountMeta(pubkey=source_ata, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=dest_ata, is_signer=False, is_writable=True),
-            AccountMeta(pubkey=owner, is_signer=True, is_writable=False),
-        ],
-        data=data,
+    """
+    Official SPL TransferChecked builder.
+    """
+
+    return transfer_checked(
+        TransferCheckedParams(
+            program_id=TOKEN_PROGRAM_ID,
+            source=source_ata,
+            mint=mint,
+            dest=dest_ata,
+            owner=owner,
+            amount=amount,
+            decimals=decimals,
+            signers=[],
+        )
     )
 
 
@@ -982,17 +992,22 @@ async def create_token(request: Request, payload: TokenCreationRequest):
                    revoke_update=payload.revoke_update_authority)
 
         payer_pubkey = Pubkey.from_string(payload.payer)
-        mint_keypair = Keypair()
-        mint_pubkey = mint_keypair.pubkey()
+
+        # ── Derive mint address from seed (no keypair needed = single signer) ──
+        # Use a short timestamp-based seed so each token gets a unique mint address.
+        # The payer is the base, so only the payer needs to sign — no mint keypair.
+        import time as _time
+        mint_seed = f"mint:{int(_time.time() * 1000) % 1_000_000_000}"
+        mint_pubkey = Pubkey.create_with_seed(payer_pubkey, mint_seed, TOKEN_PROGRAM_ID)
 
         recent_blockhash = await get_latest_blockhash()
         dbg_create('blockhash', value=str(recent_blockhash))
         
         # --- Derive ATA for creator ---
-        ata_pubkey = Pubkey.find_program_address(
-            [bytes(payer_pubkey), bytes(TOKEN_PROGRAM_ID), bytes(mint_pubkey)],
-            ASSOCIATED_TOKEN_PROGRAM_ID
-        )[0]
+        ata_pubkey = get_associated_token_address(
+            owner=payer_pubkey,
+            mint=mint_pubkey,
+        )
         
         logger.info(f"  Mint:    {mint_pubkey}")
         logger.info(f"  ATA:     {ata_pubkey}")
@@ -1057,32 +1072,43 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             f"Mint rent exemption: {lamports_for_mint} lamports"
         )
         
-        create_account_ix = create_account(
-            CreateAccountParams(
+        create_account_ix = create_account_with_seed(
+            CreateAccountWithSeedParams(
                 from_pubkey=payer_pubkey,
                 to_pubkey=mint_pubkey,
+                base=payer_pubkey,
+                seed=mint_seed,
                 lamports=lamports_for_mint,
                 space=MINT_SIZE,
-                owner=TOKEN_PROGRAM_ID
+                owner=TOKEN_PROGRAM_ID,
             )
         )
         
-       # --- Instruction 2: Initialize mint ---
-       initialize_mint_ix = initialize_mint(
-           InitializeMintParams(
-               program_id=TOKEN_PROGRAM_ID,
-               mint=mint_pubkey,
-               decimals=decimals,
-               mint_authority=payer_pubkey,
-               freeze_authority=payer_pubkey,
-           )
+        # --- Instruction 2: Initialize mint ---
+        initialize_mint_ix = initialize_mint(
+            InitializeMintParams(
+                program_id=TOKEN_PROGRAM_ID,
+                mint=mint_pubkey,
+                decimals=decimals,
+                mint_authority=payer_pubkey,
+                freeze_authority=payer_pubkey,
+            )
         )
         
         # --- Instruction 3: Create Associated Token Account ---
         create_ata_ix = build_create_ata_ix(payer_pubkey, ata_pubkey, payer_pubkey, mint_pubkey)
         
         # --- Instruction 4: MintTo (full supply → creator ATA) ---
-        mint_to_ix = build_mint_to_ix(mint_pubkey, ata_pubkey, payer_pubkey, mint_amount)
+        mint_to_ix = mint_to(
+            MintToParams(
+                program_id=TOKEN_PROGRAM_ID,
+                mint=mint_pubkey,
+                dest=ata_pubkey,
+                mint_authority=payer_pubkey,
+                amount=mint_amount,
+                signers=[],
+            )
+        )
         
         # --- Instruction 5: Create Metaplex Token Metadata ---
         metadata_pda = derive_metadata_pda(mint_pubkey)
@@ -1207,13 +1233,18 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         )
         
                 # --- Build instruction list ---
-        instructions = [
+        builder = TokenTransactionBuilder(
+            payer_pubkey,
+            recent_blockhash,
+        )
+
+        builder.add_instructions([
             create_account_ix,
             initialize_mint_ix,
-            create_metadata_ix,
             create_ata_ix,
             mint_to_ix,
-        ]
+            create_metadata_ix,
+        ])
 
         # ─── Platform Fee Transfer ───────────────────────────────────────
         if PLATFORM_FEE_LAMPORTS > 0 and PLATFORM_WALLET_PUBKEY:
@@ -1224,26 +1255,36 @@ async def create_token(request: Request, payload: TokenCreationRequest):
                     lamports=PLATFORM_FEE_LAMPORTS,
                 )
             )
-            instructions.append(fee_ix)
+            builder.add_instruction(fee_ix)
             logger.info(f"  + Platform fee charged: {PLATFORM_FEE_SOL} SOL")
 
         # --- Instruction 5+: Revoke authorities AFTER minting ---
         if payload.revoke_mint_authority:
-            instructions.append(
-                build_set_authority_ix(mint_pubkey, payer_pubkey, 0, None)
+            builder.add_instruction(
+                build_set_authority_ix(
+                    mint_pubkey,
+                    payer_pubkey,
+                    0,
+                    None,
+                )
             )
             logger.info("  + Revoke mint authority")
 
         if payload.revoke_freeze_authority:
-            instructions.append(
-                build_set_authority_ix(mint_pubkey, payer_pubkey, 1, None)
+            builder.add_instruction(
+                build_set_authority_ix(
+                    mint_pubkey,
+                    payer_pubkey,
+                    1,
+                    None,
+                )
             )
             logger.info("  + Revoke freeze authority")
 
         # ---------- DEBUG ----------
         logger.info("========== TRANSACTION DEBUG ==========")
 
-        for i, ix in enumerate(instructions):
+        for i, ix in enumerate(builder.instructions):
             logger.info(f"Instruction #{i}")
             logger.info(f"Program: {ix.program_id}")
             logger.info(f"Data Length: {len(ix.data)}")
@@ -1257,21 +1298,14 @@ async def create_token(request: Request, payload: TokenCreationRequest):
                 )
 
         logger.info("=======================================")
-
         # --- Build transaction ---
-        msg = Message.new_with_blockhash(
-            instructions,
-            payer_pubkey,
-            recent_blockhash,
-        )
-
-        tx = SoldersTransaction.new_unsigned(msg)
+        tx = builder.build()
         tx_serialized = bytes(tx)
 
         # ---------- TX SUMMARY ----------
         logger.info("========== TX SUMMARY ==========")
         logger.info(f"Serialized size: {len(tx_serialized)} bytes")
-        logger.info(f"Instructions: {len(instructions)}")
+        logger.info(f"Instructions: {len(builder.instructions)}")
         logger.info(f"Recent blockhash: {recent_blockhash}")
         logger.info(f"Payer: {payer_pubkey}")
         logger.info(f"Mint: {mint_pubkey}")
@@ -1281,8 +1315,6 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         logger.info("===== SERIALIZED TX =====")
         logger.info(base64.b64encode(tx_serialized).decode())
         logger.info("=========================")
-
-        mint_secret = bytes(mint_keypair)
 
         MAX_TX_SIZE = 1232
 
@@ -1311,15 +1343,9 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             )
 
             # Metadata instruction is still the 3rd instruction
-            instructions[2] = create_metadata_ix
+            builder.instructions[2] = create_metadata_ix
 
-            msg = Message.new_with_blockhash(
-                instructions,
-                payer_pubkey,
-                recent_blockhash,
-            )
-
-            tx = SoldersTransaction.new_unsigned(msg)
+            tx = builder.build()
             tx_serialized = bytes(tx)
 
         if len(tx_serialized) > MAX_TX_SIZE:
@@ -1338,10 +1364,18 @@ async def create_token(request: Request, payload: TokenCreationRequest):
                 ),
             )
 
+        tx_serialized = bytes(tx)
+        logger.info(f"Single-signer transaction. Final serialized size: {len(tx_serialized)} bytes")
+
         mint_address = str(mint_pubkey)
         ata_address = str(ata_pubkey)
-        dbg_create('tx_built', size_bytes=len(tx_serialized),
-                   instruction_count=len(instructions), mint=mint_address)
+        
+        dbg_create(
+            "tx_built",
+             size_bytes=len(tx_serialized),
+             instruction_count=len(builder.instructions),
+             mint=mint_address
+        )
         
         # --- Save token record ---
         token_record = TokenRecord(
@@ -1378,7 +1412,7 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         await db.tokens.insert_one(doc)
         
         elapsed = round(time.time() - start_time, 2)
-        logger.info(f"  Transaction built: {len(instructions)} ix, {elapsed}s elapsed")
+        logger.info(f"  Transaction built: {len(builder.instructions)} ix, {elapsed}s elapsed")
         
         # Analytics event
         await db.analytics.insert_one({
@@ -1391,7 +1425,7 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             "ipfs_metadata": bool(metadata_uri.startswith("ipfs://")),
             "revoke_mint": payload.revoke_mint_authority,
             "revoke_freeze": payload.revoke_freeze_authority,
-            "instructions": len(instructions),
+            "instructions": len(builder.instructions),
             "elapsed_seconds": elapsed,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
@@ -1415,13 +1449,12 @@ async def create_token(request: Request, payload: TokenCreationRequest):
         )
 
         return {
-            "transaction": base64.b64encode(tx_serialized).decode('utf-8'),
+            "transaction": base64.b64encode(tx_serialized).decode("utf-8"),
             "mint": mint_address,
             "ata": ata_address,
             "metadataPda": str(metadata_pda),
             "metadataUri": metadata_uri,
             "imageUri": image_ipfs_uri,
-            "mintKeypair": base64.b64encode(mint_secret).decode('utf-8'),
             "totalMinted": str(mint_amount),
 
             "platformFee": PLATFORM_FEE_SOL,
@@ -1431,9 +1464,30 @@ async def create_token(request: Request, payload: TokenCreationRequest):
             "estimatedTotalCost": estimated_total_cost,
 
             "explorerUrl": f"https://explorer.solana.com/address/{mint_address}",
-            "message": "Transaction ready for signing"
+            "message": "Transaction ready for signing",
+
+            "instructionData": {
+                "payer": str(payer_pubkey),
+                "mint": mint_address,
+                "ata": ata_address,
+                "recentBlockhash": str(recent_blockhash),
+
+                "decimals": decimals,
+                "mintAmount": mint_amount,
+
+                "metadata": {
+                    "name": payload.metadata.name,
+                    "symbol": payload.metadata.symbol,
+                    "uri": metadata_uri,
+                },
+
+                "revokeMintAuthority": payload.revoke_mint_authority,
+                "revokeFreezeAuthority": payload.revoke_freeze_authority,
+                "revokeUpdateAuthority": payload.revoke_update_authority,
+
+                "platformFeeLamports": PLATFORM_FEE_LAMPORTS,
+            },
         }
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -1598,34 +1652,21 @@ async def revoke_authority(request: Request, payload: AuthorityRevocationRequest
             "close": 3
         }
         
-        authority_type_byte = authority_type_map.get(payload.authority_type, 0)
-        
-        set_authority_data = bytes([6]) + \
-                            authority_type_byte.to_bytes(1, 'little') + \
-                            bytes([0])
-        
-        set_authority_ix = Instruction(
-            program_id=TOKEN_PROGRAM_ID,
-            accounts=[
-                AccountMeta(pubkey=mint_pubkey, is_signer=False, is_writable=True),
-                AccountMeta(pubkey=payer_pubkey, is_signer=True, is_writable=False)
-            ],
-            data=set_authority_data
-        )
         
         msg = Message.new_with_blockhash(
-            [set_authority_ix],
-            payer_pubkey,
-            recent_blockhash
+            [
+                build_set_authority_ix(
+                    mint_pk,
+                    payer_pk,
+                    authority_type_map.get(payload.authority_type, 0),
+                    None,
+                )
+            ],
+            payer_pk,
+            recent_blockhash,
         )
         
         tx = SoldersTransaction.new_unsigned(msg)
-        
-        field_name = f"{payload.authority_type}_authority_revoked"
-        await db.tokens.update_one(
-            {"mint": payload.mint},
-            {"$set": {field_name: True}}
-        )
         
         return {
             "transaction": base64.b64encode(bytes(tx)).decode('utf-8'),
