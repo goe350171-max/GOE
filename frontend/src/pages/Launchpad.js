@@ -213,12 +213,13 @@ const TokenCreationForm = () => {
         revokeFreezeAuthority: authorities.revokeFreeze,
         revokeUpdateAuthority: authorities.revokeUpdate
       }, {
-        confirmBeforeSign: ({ simulation }) =>
+        confirmBeforeSign: ({ simulation, isFinalizeStep }) =>
           new Promise((resolve) => {
             setSafetyModal({
               open: true,
               loadingSimulation: false,
               simulation,
+              isFinalizeStep: !!isFinalizeStep,
               resolve,
             });
           }),
@@ -632,7 +633,7 @@ const TokenCreationForm = () => {
         open={!!safetyModal?.open}
         loadingSimulation={!!safetyModal?.loadingSimulation}
         simulation={safetyModal?.simulation}
-        actionLabel="Create SPL Token"
+        actionLabel={safetyModal?.isFinalizeStep ? "Lock Token Authorities" : "Create SPL Token"}
         walletAddress={publicKey?.toBase58() || ''}
         breakdownLines={[
           { label: 'Token name', value: formData.name || '—' },
