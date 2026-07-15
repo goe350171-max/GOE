@@ -131,7 +131,7 @@ async function verifyOnChain(connection, mintPubkey, ataPubkey, expectedRaw, max
 
 export const useTokenOperations = () => {
   const { connection } = useConnection();
-  const { publicKey, sendTransaction, wallet } = useWallet();
+  const { publicKey, signTransaction, wallet } = useWallet();
   const { isMainnet, testMode, safeMode, recordSignedTransaction } = useNetwork();
   const { push: diagPush, clear: diagClear } = useDiagnostics();
   const [loading, setLoading] = useState(false);
@@ -144,15 +144,15 @@ export const useTokenOperations = () => {
    *   3. Simulate transaction → compute SOL cost
    *   4. Call confirmBeforeSign({ simulation, ... }) and AWAIT user's explicit click
    *      (this is the safety gate — automation cannot bypass it)
-   *   5. If user confirmed → signAndSendTransaction (Phantom/Solflare native provider)
-   *   6. Send (mainnet: no auto-retry, devnet: up to 3 retries via web3.js)
+   *   5. If user confirmed → wallet.signTransaction (Phantom popup)
+   *   6. Send via our Helius RPC connection (sendRawTransaction)
    *   7. Verify on-chain + persist signature
    *   8. Record audit log entry
    *
    * confirmBeforeSign signature: ({ simulation, prepared }) => Promise<boolean>
    */
   const createToken = useCallback(async (tokenData, { confirmBeforeSign } = {}) => {
-    if (!publicKey || !sendTransaction) {
+    if (!publicKey || !signTransaction) {
       toast.error('Please connect your wallet');
       return null;
     }
@@ -267,7 +267,7 @@ export const useTokenOperations = () => {
       // Single-signer transaction (payer only) — safe to refresh blockhash.
       const backendBlockhash = transaction.recentBlockhash;
       try {
-        const latest = await connection.getLatestBlockhash('finalized');
+        const latest = await connection.getLatestBlockhash('confirmed');
         transaction.recentBlockhash = latest.blockhash;
         transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
         diagPush('blockhash-refresh', 'ok', {
@@ -445,12 +445,10 @@ export const useTokenOperations = () => {
       diagPush('user-confirm', 'ok');
 
       // ── Re-refresh blockhash right before signing ──────────────────────
-      // The user may have spent time reading the safety modal before
-      // clicking Confirm. The blockhash fetched in step 2 can expire by now,
-      // causing "Signature has expired: block height exceeded" at send time.
-      // Get a fresh one immediately before the wallet signs.
+      // The user may have spent time reading the safety modal. Get a fresh
+      // blockhash immediately before signing to avoid expiry errors.
       try {
-        const freshBlockhash = await connection.getLatestBlockhash('finalized');
+        const freshBlockhash = await connection.getLatestBlockhash('confirmed');
         transaction.recentBlockhash = freshBlockhash.blockhash;
         transaction.lastValidBlockHeight = freshBlockhash.lastValidBlockHeight;
         diagPush('blockhash-refresh-presign', 'ok', {
@@ -458,108 +456,79 @@ export const useTokenOperations = () => {
         });
       } catch (e) {
         diagPush('blockhash-refresh-presign', 'fail', { error: e.message });
-        // Non-fatal — fall back to the earlier blockhash if this refresh fails
       }
 
-      // ── 5+6. Sign AND send via native provider signAndSendTransaction ──
-      // Blowfish requires provider.signAndSendTransaction() — this allows
-      // Blowfish to inject Lighthouse guard instructions and removes the
-      // "This dApp could be malicious" warning.
-      // We detect the wallet and call the correct provider method.
+      // ── 5. Wallet signing ──────────────────────────────────────────────
       diagPush('wallet-sign', 'start', { adapter: wallet?.adapter?.name });
-      dbg('5/9 requesting signAndSendTransaction');
+      dbg('5/9 requesting wallet signature');
       toast.loading('Sign the transaction in your wallet…', { id: 'tx-sign' });
-      let signature;
+      let signedTx;
       try {
-        const walletName = wallet?.adapter?.name?.toLowerCase() || '';
-
-        if (walletName.includes('phantom') && window.solana?.signAndSendTransaction) {
-          // Phantom native provider
-          const { signature: sig } = await window.solana.signAndSendTransaction(transaction);
-          signature = sig;
-
-        } else if (walletName.includes('solflare') && window.solflare?.signAndSendTransaction) {
-          // Solflare native provider
-          const { signature: sig } = await window.solflare.signAndSendTransaction(transaction);
-          signature = sig;
-
-        } else {
-          // Fallback for any other wallet (Backpack, Glow, etc.)
-          // Use wallet-adapter sendTransaction which calls the wallet's native method
-          signature = await sendTransaction(transaction, connection, {
-            skipPreflight: false,
-            preflightCommitment: 'confirmed',
-            maxRetries: isMainnet ? 0 : 3,
-          });
-        }
-
-        diagPush('wallet-sign', 'ok', { signature });
-        diagPush('send', 'ok', { signature });
-        dbg('5+6/9 signAndSendTransaction complete', { signature });
-      } catch (signSendErr) {
+        signedTx = await signTransaction(transaction);
+      } catch (signErr) {
         diagPush('wallet-sign', 'fail', {
           adapter: wallet?.adapter?.name,
-          errorName: signSendErr?.name,
-          errorCode: signSendErr?.code,
-          errorMessage: signSendErr?.message,
+          errorName: signErr?.name,
+          errorCode: signErr?.code,
+          errorMessage: signErr?.message,
         });
         toast.dismiss('tx-sign');
-        if (signSendErr.logs) {
-          dbg('5+6/9 error logs:', signSendErr.logs);
-          console.error(signSendErr.logs);
-        }
-        if (signSendErr.message?.includes('insufficient lamports')) {
-          throw new Error('Your wallet does not have enough SOL to complete this transaction.');
-        }
-        if (signSendErr.message?.includes('block height exceeded') || signSendErr.message?.includes('expired')) {
-          throw new Error('The transaction took too long to sign and expired. Please click Create Token again — this usually works on retry.');
-        }
-        throw signSendErr;
+        throw signErr;
       }
+      diagPush('wallet-sign', 'ok');
+      dbg('5/9 wallet signed');
       toast.dismiss('tx-sign');
 
-      // ── 7. Wait for finalized confirmation ────────────────────────────
+      // ── 6. Send via our own Helius RPC ────────────────────────────────
+      toast.loading('Sending transaction…', { id: 'tx-send' });
+      diagPush('send', 'start');
+      let signature;
+      try {
+        signature = await connection.sendRawTransaction(signedTx.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+          maxRetries: isMainnet ? 0 : 3,
+        });
+        diagPush('send', 'ok', { signature });
+        dbg('6/9 sent', { signature });
+      } catch (sendErr) {
+        diagPush('send', 'fail', {
+          errorName: sendErr?.name,
+          errorMessage: sendErr?.message,
+        });
+        toast.dismiss('tx-send');
+        if (sendErr.logs) console.error(sendErr.logs);
+        if (sendErr.message?.includes('insufficient lamports')) {
+          throw new Error('Your wallet does not have enough SOL to complete this transaction.');
+        }
+        throw sendErr;
+      }
       toast.dismiss('tx-send');
-      toast.loading('Waiting for finalized confirmation…', { id: 'tx-confirm' });
-      diagPush('confirm', 'start');
 
+      // ── 7. Confirm via same Helius RPC ────────────────────────────────
+      toast.loading('Confirming transaction…', { id: 'tx-confirm' });
+      diagPush('confirm', 'start');
       let confirmResult;
       try {
-        // Reuse the lastValidBlockHeight we got when refreshing the blockhash
-        // — same cluster, no need for another RPC round-trip.
         confirmResult = await connection.confirmTransaction(
           {
             signature,
             blockhash: transaction.recentBlockhash,
             lastValidBlockHeight: transaction.lastValidBlockHeight,
           },
-          'finalized',
+          'confirmed',
         );
       } catch (confirmErr) {
-        // "block height exceeded" from confirmTransaction is often a FALSE
-        // NEGATIVE — the transaction may have already landed, but polling
-        // gave up before reaching 'finalized' commitment. Check the actual
-        // on-chain status directly before declaring failure.
+        // If confirmation polling times out, check directly before failing
         if (confirmErr.message?.includes('block height exceeded') || confirmErr.message?.includes('expired')) {
-          dbg('7/9 confirmTransaction threw expiry — checking actual signature status');
-          diagPush('confirm', 'recheck', { reason: 'block height exceeded, verifying directly' });
-          try {
-            const statusResult = await connection.getSignatureStatus(signature, {
-              searchTransactionHistory: true,
-            });
-            const status = statusResult?.value;
-            if (status && !status.err && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')) {
-              // Transaction actually succeeded — proceed as normal
-              dbg('7/9 transaction actually succeeded despite confirmTransaction timeout', status);
-              confirmResult = { value: { err: null }, context: { slot: statusResult.context?.slot } };
-            } else if (status?.err) {
-              throw new Error(`Transaction failed: ${JSON.stringify(status.err)}`);
-            } else {
-              // Genuinely not found / still pending after expiry — real failure
-              throw new Error('Transaction expired before confirmation. Please try again — check the explorer link to verify if it landed: https://explorer.solana.com/tx/' + signature);
-            }
-          } catch (statusErr) {
-            throw statusErr;
+          const statusResult = await connection.getSignatureStatus(signature, {
+            searchTransactionHistory: true,
+          });
+          const status = statusResult?.value;
+          if (status && !status.err && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')) {
+            confirmResult = { value: { err: null }, context: statusResult.context };
+          } else {
+            throw new Error('Transaction expired before confirmation. Please try again.');
           }
         } else {
           throw confirmErr;
@@ -655,10 +624,10 @@ export const useTokenOperations = () => {
     } finally {
       setLoading(false);
     }
-  }, [publicKey, sendTransaction, connection, isMainnet, testMode, safeMode, recordSignedTransaction, wallet, diagPush, diagClear]);
+  }, [publicKey, signTransaction, connection, isMainnet, testMode, safeMode, recordSignedTransaction, wallet, diagPush, diagClear]);
 
   const revokeAuthority = useCallback(async (mint, authorityType, { confirmBeforeSign } = {}) => {
-    if (!publicKey || !sendTransaction) {
+    if (!publicKey || !signTransaction) {
       toast.error('Please connect your wallet');
       return null;
     }
@@ -683,7 +652,7 @@ export const useTokenOperations = () => {
       const transaction = Transaction.from(txBuffer);
       // Refresh blockhash + feePayer to match the frontend's actual cluster.
       try {
-        const latest = await connection.getLatestBlockhash('finalized');
+        const latest = await connection.getLatestBlockhash('confirmed');
         transaction.recentBlockhash = latest.blockhash;
         transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
       } catch (_) { /* keep backend blockhash if refresh fails */ }
@@ -707,24 +676,48 @@ export const useTokenOperations = () => {
       }
       if (!approved) return { success: false, cancelled: true };
 
-      const walletName = wallet?.adapter?.name?.toLowerCase() || '';
+      let signedTx;
+      try {
+        signedTx = await signTransaction(transaction);
+      } catch (signErr) {
+        toast.dismiss('rev-build');
+        throw signErr;
+      }
+
       let signature;
-      if (walletName.includes('phantom') && window.solana?.signAndSendTransaction) {
-        const { signature: sig } = await window.solana.signAndSendTransaction(transaction);
-        signature = sig;
-      } else if (walletName.includes('solflare') && window.solflare?.signAndSendTransaction) {
-        const { signature: sig } = await window.solflare.signAndSendTransaction(transaction);
-        signature = sig;
-      } else {
-        signature = await sendTransaction(transaction, connection, {
+      try {
+        signature = await connection.sendRawTransaction(signedTx.serialize(), {
           skipPreflight: false,
           preflightCommitment: 'confirmed',
           maxRetries: isMainnet ? 0 : 3,
         });
+      } catch (sendErr) {
+        if (sendErr.message?.includes('insufficient lamports')) {
+          throw new Error('Your wallet does not have enough SOL to complete this transaction.');
+        }
+        throw sendErr;
       }
 
       toast.loading('Confirming…', { id: 'rev-confirm' });
-      await connection.confirmTransaction(signature, 'finalized');
+      try {
+        await connection.confirmTransaction(
+          {
+            signature,
+            blockhash: transaction.recentBlockhash,
+            lastValidBlockHeight: transaction.lastValidBlockHeight,
+          },
+          'confirmed',
+        );
+      } catch (confirmErr) {
+        // Check directly before failing
+        const statusResult = await connection.getSignatureStatus(signature, {
+          searchTransactionHistory: true,
+        });
+        const status = statusResult?.value;
+        if (!status || status.err || (status.confirmationStatus !== 'confirmed' && status.confirmationStatus !== 'finalized')) {
+          throw new Error('Revoke transaction expired. Please try again.');
+        }
+      }
       toast.dismiss('rev-confirm');
 
       recordSignedTransaction({
@@ -737,6 +730,18 @@ export const useTokenOperations = () => {
         details: { authorityType },
       });
 
+      // Update DB to reflect revoked authority — done here after on-chain
+      // confirmation so we don't mark it revoked if user cancels in wallet.
+      try {
+        await axios.post(
+          `${API}/tokens/revoke-authority-status`,
+          null,
+          { params: { mint, authority_type: authorityType } }
+        );
+      } catch (e) {
+        console.warn('Could not update revoke status in DB:', e);
+      }
+
       toast.success(`${authorityType} authority revoked!`);
       return { success: true, signature };
     } catch (err) {
@@ -748,7 +753,7 @@ export const useTokenOperations = () => {
     } finally {
       setLoading(false);
     }
-  }, [publicKey, sendTransaction, wallet, connection, isMainnet, testMode, recordSignedTransaction]);
+  }, [publicKey, signTransaction, wallet, connection, isMainnet, testMode, recordSignedTransaction]);
 
   return {
     createToken,
