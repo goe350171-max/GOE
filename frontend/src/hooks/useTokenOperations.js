@@ -217,7 +217,7 @@ export const useTokenOperations = () => {
           maxRetries: isMainnet ? 0 : 3,
         });
       } catch (sendErr) {
-        if (sendErr.message?.includes('insufficient lamports')) {
+        if (sendErr.message?.includes('insufficient lamports') || sendErr.message?.includes('insufficient funds')) {
           throw new Error('Not enough SOL to complete the authority lock transaction.');
         }
         throw sendErr;
@@ -636,8 +636,8 @@ export const useTokenOperations = () => {
         });
         toast.dismiss('tx-send');
         if (sendErr.logs) console.error(sendErr.logs);
-        if (sendErr.message?.includes('insufficient lamports')) {
-          throw new Error('Your wallet does not have enough SOL to complete this transaction.');
+        if (sendErr.message?.includes('insufficient lamports') || sendErr.message?.includes('insufficient funds')) {
+          throw new Error('Your wallet does not have enough SOL to complete this transaction. Token creation costs roughly 0.05-0.06 SOL total (platform fee + on-chain rent).');
         }
         throw sendErr;
       }
@@ -856,7 +856,7 @@ export const useTokenOperations = () => {
           maxRetries: isMainnet ? 0 : 3,
         });
       } catch (sendErr) {
-        if (sendErr.message?.includes('insufficient lamports')) {
+        if (sendErr.message?.includes('insufficient lamports') || sendErr.message?.includes('insufficient funds')) {
           throw new Error('Your wallet does not have enough SOL to complete this transaction.');
         }
         throw sendErr;
